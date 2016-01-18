@@ -65,13 +65,13 @@ start_vnode(I) ->
 %% @doc Read state of key at given snapshot time, this does not touch the vnode process
 %%      directly, instead it just reads from the operations and snapshot tables that
 %%      are in shared memory, allowing concurrent reads.
--spec read(eleveldb:db_ref(), eleveldb:db_ref(), key(), type(), snapshot_time(), txid(), partition_id()) -> {ok, snapshot()} | {error, reason()}.
+-spec read(antidote_db:antidote_db(), antidote_db:antidote_db(), key(), type(), snapshot_time(), txid(), partition_id()) -> {ok, snapshot()} | {error, reason()}.
 read(OpsDB, SnapshotsDB, Key, Type, SnapshotTime, TxId,_Partition) ->
     internal_read(OpsDB, SnapshotsDB, Key, Type, SnapshotTime, TxId).
 
 %%@doc write operation to antidote DB for future read, updates are stored
 %%     one at a time into the antidote DB tables
--spec update(eleveldb:db_ref(), eleveldb:db_ref(), key(), clocksi_payload()) -> ok | {error, reason()}.
+-spec update(antidote_db:antidote_db(), antidote_db:antidote_db(), key(), clocksi_payload()) -> ok | {error, reason()}.
 update(OpsDB, SnapshotsDB, Key, DownstreamOp) ->
     Node = get_node_for_key(Key),
     riak_core_vnode_master:sync_command(Node, {update, OpsDB, SnapshotsDB, Key, DownstreamOp},
@@ -79,7 +79,7 @@ update(OpsDB, SnapshotsDB, Key, DownstreamOp) ->
 
 %%@doc write snapshot to antidote DB for future read, snapshots are stored
 %%     one at a time into the antidote DB table
--spec store_ss(eleveldb:db_ref(), eleveldb:db_ref(), key(), snapshot(), snapshot_time()) -> ok.
+-spec store_ss(antidote_db:antidote_db(), antidote_db:antidote_db(), key(), snapshot(), snapshot_time()) -> ok.
 store_ss(OpsDB, SnapshotsDB, Key, Snapshot, CommitTime) ->
     Node = get_node_for_key(Key),
     riak_core_vnode_master:command(Node, {store_ss, OpsDB, SnapshotsDB, Key, Snapshot, CommitTime},
@@ -153,7 +153,7 @@ handoff_finished(_TargetNode, State) ->
 handle_handoff_data(Data, State = #state{partition=Partition}) ->
     {Key, Operation} = binary_to_term(Data),
     {OpsDB, _SnapshotsDB} = clocksi_vnode:get_dbs(Partition),
-    ok = antidote_leveldb:put(OpsDB, Key, Operation),
+    ok = antidote_db:put(OpsDB, Key, Operation),
     {reply, ok, State}.
 
 encode_handoff_item(Key, Operation) ->
@@ -178,9 +178,9 @@ terminate(_Reason, _State) ->
 
 %%---------------- Internal Functions -------------------%%
 
--spec internal_store_ss(eleveldb:db_ref(),eleveldb:db_ref(),key(), snapshot(), snapshot_time()) -> true.
+-spec internal_store_ss(antidote_db:antidote_db(),antidote_db:antidote_db(),key(), snapshot(), snapshot_time()) -> true.
 internal_store_ss(OpsDB, SnapshotsDB, Key, Snapshot, CommitTime) ->
-    SnapshotDict = case antidote_leveldb:get(SnapshotsDB, Key) of
+    SnapshotDict = case antidote_db:get(SnapshotsDB, Key) of
                        not_found ->
                            vector_orddict:new();
                        SnapshotDictA ->
@@ -192,9 +192,9 @@ internal_store_ss(OpsDB, SnapshotsDB, Key, Snapshot, CommitTime) ->
 
 %% @doc This function takes care of reading. It is implemented here for not blocking the
 %% vnode when the write function calls it. That is done for garbage collection.
--spec internal_read(eleveldb:db_ref(), eleveldb:db_ref(),key(), type(), snapshot_time(), txid() | ignore) -> {ok, snapshot()} | {error, no_snapshot}.
+-spec internal_read(antidote_db:antidote_db(), antidote_db:antidote_db(),key(), type(), snapshot_time(), txid() | ignore) -> {ok, snapshot()} | {error, no_snapshot}.
 internal_read(OpsDB, SnapshotsDB, Key, Type, MinSnapshotTime, TxId) ->
-    Result = case antidote_leveldb:get(SnapshotsDB, Key) of
+    Result = case antidote_db:get(SnapshotsDB, Key) of
 		not_found ->
 		     %% First time reading this key, store an empty snapshot in the antidote DB
 		     BlankSS = {0,clocksi_materializer:new(Type)},
@@ -221,7 +221,7 @@ internal_read(OpsDB, SnapshotsDB, Key, Type, MinSnapshotTime, TxId) ->
 		Res = logging_vnode:get(Node, {get, LogId, MinSnapshotTime, Type, Key}),
 		Res;
 	    {LatestSnapshot1,SnapshotCommitTime1,IsFirst1} ->
-		case antidote_leveldb:get(OpsDB, Key) of
+		case antidote_db:get(OpsDB, Key) of
 			not_found ->
 			{0, [], LatestSnapshot1,SnapshotCommitTime1,IsFirst1};
 		    {Length1, Ops1} ->
@@ -273,7 +273,7 @@ belongs_to_snapshot_op(SSTime, {OpDc,OpCommitTime}, OpSs) ->
 
 %% @doc Operation to insert a Snapshot in the antidote DB and start
 %%      Garbage collection triggered by reads.
--spec snapshot_insert_gc(eleveldb:db_ref(), eleveldb:db_ref(), key(), vector_orddict:vector_orddict()) -> true.
+-spec snapshot_insert_gc(antidote_db:antidote_db(), antidote_db:antidote_db(), key(), vector_orddict:vector_orddict()) -> true.
 snapshot_insert_gc(OpsDB, SnapshotsDB, Key, SnapshotDict) ->
     %% Should check op size here also, when run from op gc
     case (vector_orddict:size(SnapshotDict)) >= ?SNAPSHOT_THRESHOLD of
@@ -285,17 +285,17 @@ snapshot_insert_gc(OpsDB, SnapshotsDB, Key, SnapshotDict) ->
             CommitTime = lists:foldl(fun({CT1, _ST}, Acc) ->
                 vectorclock:keep_min(CT1, Acc)
                                      end, CT, vector_orddict:to_list(PrunedSnapshots)),
-            {Length, OpsDict} = case antidote_leveldb:get(OpsDB, Key) of
+            {Length, OpsDict} = case antidote_db:get(OpsDB, Key) of
                                     not_found ->
                                         {0, []};
                                     {Len, Dict} ->
                                         {Len, Dict}
                                 end,
             {NewLength, PrunedOps} = prune_ops({Length, OpsDict}, CommitTime),
-            ok = antidote_leveldb:put(SnapshotsDB, Key, PrunedSnapshots),
-            ok = antidote_leveldb:put(OpsDB, Key, {NewLength, PrunedOps});
+            ok = antidote_db:put(SnapshotsDB, Key, PrunedSnapshots),
+            ok = antidote_db:put(OpsDB, Key, {NewLength, PrunedOps});
         false ->
-            ok = antidote_leveldb:put(SnapshotsDB, Key, SnapshotDict)
+            ok = antidote_db:put(SnapshotsDB, Key, SnapshotDict)
     end.
 
 %% @doc Remove from OpsDict all operations that have committed before Threshold.
@@ -325,9 +325,9 @@ prune_ops({_Len,OpsDict}, Threshold)->
 %% the mechanism is very simple; when there are more than OPS_THRESHOLD
 %% operations for a given key, just perform a read, that will trigger
 %% the GC mechanism.
--spec op_insert_gc(eleveldb:db_ref(),eleveldb:db_ref(), key(), clocksi_payload()) -> true.
+-spec op_insert_gc(antidote_db:antidote_db(),antidote_db:antidote_db(), key(), clocksi_payload()) -> true.
 op_insert_gc(OpsDB, SnapshotsDB, Key, DownstreamOp)->
-    {Length,OpsDict,NewId} = case antidote_leveldb:get(OpsDB, Key) of
+    {Length,OpsDict,NewId} = case antidote_db:get(OpsDB, Key) of
 				 not_found->
 				     {0,[],1};
                  {Len, [{PrevId,First}|Rest]}->
@@ -339,13 +339,13 @@ op_insert_gc(OpsDB, SnapshotsDB, Key, DownstreamOp)->
             SnapshotTime=DownstreamOp#clocksi_payload.snapshot_time,
             {_, _} = internal_read(OpsDB, SnapshotsDB, Key, Type, SnapshotTime, ignore),
 	        %% Have to get the new ops dict because the interal_read can change it
-	        [{_, {Length1,OpsDict1}}] = antidote_leveldb:get(OpsDB, Key),
+	        [{_, {Length1,OpsDict1}}] = antidote_db:get(OpsDB, Key),
             OpsDict2=[{NewId,DownstreamOp} | OpsDict1],
-            ok = antidote_leveldb:put(OpsDB, Key, {Length1 + 1, OpsDict2}),
+            ok = antidote_db:put(OpsDB, Key, {Length1 + 1, OpsDict2}),
             true;
         false ->
             OpsDict1=[{NewId,DownstreamOp} | OpsDict],
-            ok = antidote_leveldb:put(OpsDB, Key, {Length + 1,OpsDict1}),
+            ok = antidote_db:put(OpsDB, Key, {Length + 1,OpsDict1}),
             true
     end.
 

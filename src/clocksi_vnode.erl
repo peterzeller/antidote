@@ -25,7 +25,8 @@
 
 -export([start_vnode/1,
     read_data_item/5,
-    get_cache_name/2,
+    generate_cache_name/2,
+    generate_db_name/2,
     get_min_prepared/1,
     get_active_txns_key/3,
     get_active_txns/2,
@@ -72,8 +73,8 @@
     committed_tx :: cache_id(),
     read_servers :: non_neg_integer(),
     prepared_dict :: list(),
-    ops_db :: eleveldb:db_ref(),
-    snapshots_db :: eleveldb:db_ref()}).
+    ops_db :: antidote_db:antidote_db(),
+    snapshots_db :: antidote_db:antidote_db()}).
 
 %%%===================================================================
 %%% API
@@ -199,9 +200,11 @@ abort(ListofNodes, TxId) ->
     end, ok, ListofNodes).
 
 
-get_cache_name(Partition, Base) ->
+generate_cache_name(Base, Partition) ->
     list_to_atom(atom_to_list(node()) ++ atom_to_list(Base) ++ "-" ++ integer_to_list(Partition)).
 
+generate_db_name(Base, Partition) ->
+    atom_to_list(Base) ++ "-" ++ integer_to_list(Partition).
 
 %% @doc Initializes all data structures that vnode needs to track information
 %%      the transactions it participates on.
@@ -209,8 +212,8 @@ init([Partition]) ->
     PreparedTx = open_table(Partition),
     CommittedTx = ets:new(committed_tx, [set]),
 
-    OpsDB = eleveldb:open(antidote_leveldb:get_db_name(ops_db, Partition), [{create_if_missing, true}]),
-    SnapshotsDB = eleveldb:open(antidote_leveldb:get_db_name(snapshots_db, Partition), [{create_if_missing, true}]),
+    OpsDB = antidote_db:new(generate_db_name(ops_db, Partition)),
+    SnapshotsDB = antidote_db:new(generate_db_name(snapshots_db, Partition)),
 
     %% Check if there where any errors while opening the DBs
     case (element(1, OpsDB) == error) or (element(1, SnapshotsDB) == error) of
@@ -255,9 +258,9 @@ check_table_ready([{Partition, Node} | Rest]) ->
 
 
 open_table(Partition) ->
-    case ets:info(get_cache_name(Partition, prepared)) of
+    case ets:info(generate_cache_name(prepared, Partition)) of
 	undefined ->
-	    ets:new(get_cache_name(Partition, prepared),
+	    ets:new(generate_cache_name(prepared, Partition),
 		    [set, protected, named_table, ?TABLE_CONCURRENCY]);
 	_ ->
 	    %% Other vnode hasn't finished closing tables
@@ -273,7 +276,7 @@ loop_until_started(Partition, Num) ->
 
 
 handle_command({check_tables_ready}, _Sender, SD0 = #state{partition = Partition}) ->
-    Result = case ets:info(get_cache_name(Partition, prepared)) of
+    Result = case ets:info(generate_cache_name(prepared, Partition)) of
                  undefined ->
                      false;
                  _ ->
@@ -435,13 +438,13 @@ handle_exit(_Pid, _Reason, State) ->
 
 terminate(_Reason, #state{ops_db = OpsDB, snapshots_db = SnapshotsDB, partition = Partition} = _State) ->
     try
-        ets:delete(get_cache_name(Partition, prepared))
+        ets:delete(generate_cache_name(prepared, Partition))
     catch
         _:Reason ->
             lager:error("Error closing table ~p", [Reason])
     end,
-    antidote_leveldb:close(OpsDB),
-    antidote_leveldb:close(SnapshotsDB),
+    antidote_db:close(OpsDB),
+    antidote_db:close(SnapshotsDB),
     clocksi_readitem_fsm:stop_read_servers(Partition, ?READ_CONCURRENCY),
     ok.
 
@@ -632,7 +635,7 @@ check_prepared(TxId, PreparedTx, Key) ->
     end.
 -endif.
 
--spec update_materializer(eleveldb:db_ref(), eleveldb:db_ref(), DownstreamOps :: [{key(), type(), op()}],
+-spec update_materializer(antidote_db:antidote_db(), antidote_db:antidote_db(), DownstreamOps :: [{key(), type(), op()}],
     Transaction :: tx(), TxCommitTime :: {term(), term()}) ->
     ok | error.
 update_materializer(OpsDB, SnapshotsDB, DownstreamOps, Transaction, TxCommitTime) ->

@@ -52,8 +52,8 @@
 		id :: non_neg_integer(),
 		prepared_cache :: cache_id(),
 		self :: atom(),
-        ops_db :: eleveldb:db_ref(),
-        snapshots_db :: eleveldb:db_ref()}).
+        ops_db :: antidote_db:antidote_db(),
+        snapshots_db :: antidote_db:antidote_db()}).
 
 %%%===================================================================
 %%% API
@@ -66,12 +66,12 @@
 %%      reading from ets tables shared by the clock_si and materializer
 %%      vnodes, they should be started on the same physical nodes as
 %%      the vnodes with the same partition.
--spec start_link(eleveldb:db_ref(), eleveldb:db_ref(), partition_id(),non_neg_integer()) -> {ok, pid()} | ignore | {error, term()}.
+-spec start_link(antidote_db:antidote_db(), antidote_db:antidote_db(), partition_id(),non_neg_integer()) -> {ok, pid()} | ignore | {error, term()}.
 start_link(OpsDB, SnapshotsDB, Partition,Id) ->
     Addr = node(),
     gen_server:start_link({global,generate_server_name(Addr,Partition,Id)}, ?MODULE, [OpsDB, SnapshotsDB, Partition,Id], []).
 
--spec start_read_servers(eleveldb:db_ref(), eleveldb:db_ref(), partition_id(),non_neg_integer()) -> non_neg_integer().
+-spec start_read_servers(antidote_db:antidote_db(), antidote_db:antidote_db(), partition_id(),non_neg_integer()) -> non_neg_integer().
 start_read_servers(OpsDB, SnapshotsDB, Partition, Count) ->
     Addr = node(),
     start_read_servers_internal(OpsDB, SnapshotsDB, Addr, Partition, Count).
@@ -160,7 +160,7 @@ generate_random_server_name(Node, Partition) ->
 
 init([OpsDB, SnapshotsDB, Partition, Id]) ->
     Addr = node(),
-    PreparedCache = clocksi_vnode:get_cache_name(Partition,prepared),
+    PreparedCache = clocksi_vnode:generate_cache_name(prepared, Partition),
     Self = generate_server_name(Addr,Partition,Id),
     {ok, #state{ops_db = OpsDB, snapshots_db = SnapshotsDB, partition=Partition, id=Id, prepared_cache=PreparedCache,self=Self}}.
 
