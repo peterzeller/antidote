@@ -377,7 +377,9 @@ handle_command({abort, Transaction, Updates}, _Sender,
         [{Key, _Type, {_Op, _Actor}} | _Rest] ->
             LogId = log_utilities:get_logid_from_key(Key),
             [Node] = log_utilities:get_preflist_from_key(Key),
-            Result = logging_vnode:append(Node, LogId, {TxId, aborted}),
+            LogRecord = #log_record{tx_id = TxId, op_type = abort, op_payload = {}},
+            Result = logging_vnode:append(Node,LogId, LogRecord),
+            %% Result = logging_vnode:append(Node, LogId, {TxId, aborted}),
             NewPreparedDict = case Result of
 				  {ok, _} ->
 				      clean_and_notify(TxId, Updates, State);
@@ -509,11 +511,11 @@ commit(OpsDB, SnapshotsDB, Transaction, TxCommitTime, Updates, CommittedTx, Stat
             Transaction#transaction.vec_snapshot_time}},
     case Updates of
         [{Key, _Type, {_Op, _Param}} | _Rest] ->
-	    case ?CERT of
-		true ->
+	    case application:get_env(antidote,txn_cert) of
+		{ok, true} ->
 		    lists:foreach(fun({K, _, _}) -> true = ets:insert(CommittedTx, {K, TxCommitTime}) end,
 				  Updates);
-		false ->
+		_ ->
 		    ok
 	    end,
             LogId = log_utilities:get_logid_from_key(Key),
@@ -589,18 +591,19 @@ clean_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId) ->
 now_microsec({MegaSecs, Secs, MicroSecs}) ->
     (MegaSecs * 1000000 + Secs) * 1000000 + MicroSecs.
 
--ifdef(NO_CERTIFICATION).
-
-certification_check(_, _, _, _) ->
-    true.
-
--else.
+certification_check(TxId, Updates, CommittedTx, PreparedTx) ->
+    case application:get_env(antidote, txn_cert) of
+        {ok, true} -> 
+        io:format("AAAAH"),
+        certification_with_check(TxId, Updates, CommittedTx, PreparedTx);
+        _  -> true
+    end.
 
 %% @doc Performs a certification check when a transaction wants to move
 %%      to the prepared state.
-certification_check(_, [], _, _) ->
+certification_with_check(_, [], _, _) ->
     true;
-certification_check(TxId, [H | T], CommittedTx, PreparedTx) ->
+certification_with_check(TxId, [H | T], CommittedTx, PreparedTx) ->
     SnapshotTime = TxId#tx_id.snapshot_time,
     {Key, _, _} = H,
     case ets:lookup(CommittedTx, Key) of
@@ -611,7 +614,7 @@ certification_check(TxId, [H | T], CommittedTx, PreparedTx) ->
                 false ->
                     case check_prepared(TxId, PreparedTx, Key) of
                         true ->
-                            certification_check(TxId, T, CommittedTx, PreparedTx);
+                            certification_with_check(TxId, T, CommittedTx, PreparedTx);
                         false ->
                             false
                     end
@@ -619,7 +622,7 @@ certification_check(TxId, [H | T], CommittedTx, PreparedTx) ->
         [] ->
             case check_prepared(TxId, PreparedTx, Key) of
                 true ->
-                    certification_check(TxId, T, CommittedTx, PreparedTx);
+                    certification_with_check(TxId, T, CommittedTx, PreparedTx);
                 false ->
                     false
             end
@@ -633,7 +636,6 @@ check_prepared(TxId, PreparedTx, Key) ->
         _ ->
             false
     end.
--endif.
 
 -spec update_materializer(antidote_db:antidote_db(), antidote_db:antidote_db(), DownstreamOps :: [{key(), type(), op()}],
     Transaction :: tx(), TxCommitTime :: {term(), term()}) ->

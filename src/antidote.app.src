@@ -13,5 +13,5 @@
                   eleveldb
                  ]},
   {mod, { antidote_app, []}},
-  {env, []}
+  {env, [{txn_cert, true}, {txn_prot, clocksi}]}
  ]}.
