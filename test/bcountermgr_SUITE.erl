@@ -33,8 +33,8 @@
          test_dec_success/1,
          test_dec_fail/1,
          test_dec_multi_success0/1,
-         test_dec_multi_success1/1,
-         conditional_write_test_run/1
+         test_dec_multi_success1/1
+         %test_provisioning/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -42,6 +42,7 @@
 -include_lib("kernel/include/inet.hrl").
 
 -define(TYPE, antidote_crdt_bcounter).
+-define(ANTIDOTE_BUCKET, antidote_bucket).
 -define(RETRY_COUNT, 5).
 
 
@@ -76,8 +77,9 @@ all() -> [
          test_dec_success,
          test_dec_fail,
          test_dec_multi_success0,
-         test_dec_multi_success1,
-         conditional_write_test_run
+         test_dec_multi_success1
+         %,
+         %test_provisioning
         ].
 
 %% Tests creating a new `bcounter()'.
@@ -103,7 +105,7 @@ test_dec_fail(Config) ->
     Actor = dc,
     Key = bcounter3_mgr,
     {ok, CommitTime} = execute_op(Node1, increment, Key, 10, Actor),
-    _ForcePropagation = read_si(Node2, Key, CommitTime),
+    {ok, {_, [_Obj], _}} = read_si(Node2, Key, CommitTime),
     Result0 = execute_op_success(Node2, decrement, Key, 5, Actor, 0),
     ?assertEqual({error, no_permissions}, Result0).
 
@@ -127,55 +129,44 @@ test_dec_multi_success1(Config) ->
     {ok, Obj} = read(Node1, Key),
     ?assertEqual(5, ?TYPE:permissions(Obj)).
 
-conditional_write_test_run(Config) ->
-    Nodes = proplists:get_value(nodes, Config),
-    [Node1, Node2 | _OtherNodes] = Nodes,
-    Type = antidote_crdt_bcounter,
-    Key = bcounter6_mgr,
-
-    {ok, {_,_,AfterIncrement}} = rpc:call(Node1, antidote, append,
-        [Key, Type, {increment, {10, r1}}]),
-
-    %% Start a transaction on the first node and perform a read operation.
-    {ok, TxId1} = rpc:call(Node1, antidote, clocksi_istart_tx, [AfterIncrement]),
-    {ok, _} = rpc:call(Node1, antidote, clocksi_iread, [TxId1, Key, Type]),
-    %% Execute a transaction on the last node which performs a write operation.
-    {ok, TxId2} = rpc:call(Node2, antidote, clocksi_istart_tx, [AfterIncrement]),
-    ok = rpc:call(Node2, antidote, clocksi_iupdate,
-             [TxId2, Key, Type, {decrement, {3, r1}}]),
-    CommitTime1 = rpc:call(Node2, antidote, clocksi_iprepare, [TxId2]),
-    ?assertMatch({ok, _}, CommitTime1),
-    End1 = rpc:call(Node2, antidote, clocksi_icommit, [TxId2]),
-    ?assertMatch({ok, _}, End1),
-    {ok, {_,AfterTxn2}} = End1,
-    %% Resume the first transaction and check that it fails.
-    Result0 = rpc:call(Node1, antidote, clocksi_iupdate,
-         [TxId1, Key, Type, {decrement, {3, r1}}]),
-    ?assertEqual(ok, Result0),
-    CommitTime2 = rpc:call(Node1, antidote, clocksi_iprepare, [TxId1]),
-    ?assertEqual({aborted, TxId1}, CommitTime2),
-    %% Test that the failed transaction didn't affect the `bcounter()'.
-    Result1 = rpc:call(Node1, antidote, clocksi_read, [AfterTxn2, Key, Type]),
-    {ok, {_, [Counter1], _}} = Result1,
-    ?assertEqual(7, antidote_crdt_bcounter:permissions(Counter1)).
+%test_provisioning(Config) ->
+%    Clusters = proplists:get_value(clusters, Config),
+%    [Node1, Node2 | _Nodes] =  [ hd(Cluster)|| Cluster <- Clusters ],
+%    Actor = dc,
+%    Key = bcounter6_mgr,
+%    {ok, CT} = execute_op(Node1, increment, Key, 10, Actor),
+%    {ok,{_,_,_}} = read_si(Node2, Key,CT),
+%    ok = rpc:call(Node2, bcounter_mgr, request_transfer, [{Key,?ANTIDOTE_BUCKET}, 5]),
+%    timer:sleep(1000),
+%    {ok,{_,[Obj2],_}} = read_si(Node2, Key,CT),
+%    {P,D} = Obj2,
+%    Res = orddict:fold(fun({_,SomeId}, _Amount, Check) ->
+%                               (?TYPE:localPermissions(SomeId,Obj2) == 5) and Check end, true , P),
+%    ?assertEqual(true, Res).
 
 execute_op(Node, Op, Key, Amount, Actor) ->
     execute_op_success(Node, Op, Key, Amount, Actor, ?RETRY_COUNT).
 
 %%Auxiliary functions.
 execute_op_success(Node, Op, Key, Amount, Actor, Try) ->
-    Result = rpc:call(Node, antidote, append,
-                      [Key, ?TYPE, {Op, {Amount,Actor}}]),
+    Bound_object = {Key, ?TYPE, ?ANTIDOTE_BUCKET},
+    {ok, TxId} = rpc:call(Node, antidote, start_transaction, [ignore, []]),
+    Result = rpc:call(Node, antidote, update_objects, [[{Bound_object, Op, {Amount, Actor}}], TxId]),
     case Result of
-        {ok, {_,_,CommitTime}} -> {ok, CommitTime};
-        Error when Try == 0 -> Error;
+        ok ->
+            rpc:call(Node, antidote, commit_transaction, [TxId]);
+        Error when Try == 0 ->
+            rpc:call(Node, antidote, abort_transaction, [TxId]),
+            Error;
         _ ->
+            rpc:call(Node, antidote, abort_transaction, [TxId]),
             timer:sleep(1000),
             execute_op_success(Node, Op, Key, Amount, Actor, Try -1)
     end.
 
 read(Node, Key) ->
-    rpc:call(Node, antidote, read, [Key, ?TYPE]).
+    {ok, {_, [Obj], _}} = rpc:call(Node, antidote, clocksi_read, [Key, ?TYPE]),
+    {ok, Obj}.
 
 read_si(Node, Key, CommitTime) ->
     rpc:call(Node, antidote, clocksi_read, [CommitTime, Key, ?TYPE]).
