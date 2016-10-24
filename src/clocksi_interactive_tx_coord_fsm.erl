@@ -199,6 +199,7 @@ perform_singleitem_read(Key, Type) ->
         {error, Reason} ->
             {error, Reason};
         {ok, Snapshot} ->
+            log_read(Key, Type, Transaction),
             ReadResult = Type:value(Snapshot),
             %% Read only transaction has no commit, hence return the snapshot time
             CommitTime = Transaction#transaction.vec_snapshot_time,
@@ -275,6 +276,7 @@ perform_read(Args, Updated_partitions, Transaction, Sender) ->
             end,
             {error, Reason};
         {ok, Snapshot} ->
+            log_read(Key, Type, Transaction),
             Type:value(Snapshot)
     end.
 
@@ -700,6 +702,26 @@ wait_for_clock(Clock) ->
             %% wait for snapshot time to catch up with Client Clock
             timer:sleep(10),
             wait_for_clock(Clock)
+    end.
+
+%% Log read operations. This is only required to analyse staleness
+log_read(Key, Type, Transaction) ->
+    TxId = Transaction#transaction.txn_id,
+    Preflist = log_utilities:get_preflist_from_key(Key),
+    LogRecord = #log_operation{ tx_id = TxId,
+                                op_type = read,
+                                log_payload = #read_log_payload{key = Key,
+                                              type = Type,
+                                              snapshot_time = Transaction#transaction.vec_snapshot_time
+                                              }
+                              },
+    LogId = ?LOG_UTIL:get_logid_from_key(Key),
+    [Node] = Preflist,
+    case ?LOGGING_VNODE:append(Node, LogId, LogRecord) of
+      { ok, _} ->
+          ok;
+      Error ->
+          lager:debug("Couldnot log read: ~p", [Error])
     end.
 
 -ifdef(TEST).

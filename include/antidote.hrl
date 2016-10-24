@@ -103,6 +103,12 @@
 			     op :: op()
 			    }).
 
+-record(read_log_payload, {key :: key(),
+			     bucket :: bucket(),
+			     type :: type(),
+			     snapshot_time :: snapshot_time()
+			    }).
+
 -record(abort_log_payload, {}).
 
 -record(prepare_log_payload, {prepare_time :: non_neg_integer()}).
