@@ -31,7 +31,8 @@
 
 %% API
 -export([
-  handle_transaction/1]).
+  handle_transaction/1,
+  update_partition_clock/3]).
 
 %% VNode methods
 -export([
@@ -59,6 +60,13 @@
 }).
 
 %%%% API --------------------------------------------------------------------+
+
+%% Used by Commander
+%% After delivering a remote transaction, this function is called by Commander to update the clock and make the
+%% recent update visible
+-spec(update_partition_clock(partition_id(), dcid(), non_neg_integer()) -> ok).
+update_partition_clock(Partition, DCID, Timestamp) ->
+  dc_utilities:call_vnode_sync(Partition, inter_dc_dep_vnode_master, {update_partition_clock, DCID, Timestamp}).
 
 %% Passes the received transaction to the dependency buffer.
 %% At this point no message can be lost (the transport layer must ensure all transactions are delivered reliably).
@@ -152,12 +160,16 @@ try_store(State, Txn=#interdc_txn{dcid = DCID, partition = Partition, timestamp 
           CommitPld = LastOp#operation.payload,
           commit = CommitPld#log_record.op_type, %% sanity check
           TxId = CommitPld#log_record.tx_id,
-          rpc:call('riak_test@127.0.0.1', commander, acknowledge_delivery, [TxId])
+          rpc:call('riak_test@127.0.0.1', commander, acknowledge_delivery, [TxId, Timestamp])
       end,
       %% ==================== End of Instrumentation Region ====================
 
       {update_clock(State, DCID, Timestamp), true}
   end.
+
+handle_command({update_partition_clock, DCID, Timestamp}, _Sender, State) ->
+  NewState = update_clock(State, DCID, Timestamp),
+  {reply, ok, NewState};
 
 handle_command({txn, Txn}, _Sender, State) ->
   NewState = process_all_queues(push_txn(State, Txn)),
