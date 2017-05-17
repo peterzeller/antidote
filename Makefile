@@ -35,6 +35,12 @@ relclean:
 reltest: rel
 	test/release_test.sh
 
+# style checks
+lint:
+	${REBAR} as lint lint
+
+check: distclean cleantests test reltest dialyzer lint
+
 relgentlerain: export TXN_PROTOCOL=gentlerain
 relgentlerain: relclean cleantests rel
 
