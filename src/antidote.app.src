@@ -7,13 +7,12 @@
   {applications, [
                   kernel,
                   stdlib,
-                  riak_pb,
-                  riak_api,
+                  ranch,
+                  antidote_pb_codec,
                   riak_core,
                   antidote_crdt,
                   cuttlefish,
                   riak_dt,
-                  antidote_pb,
                   erlzmq,
                   rand_compat
                  ]},

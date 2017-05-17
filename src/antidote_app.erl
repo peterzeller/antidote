@@ -52,7 +52,7 @@ start(_StartType, _StartArgs) ->
 
             ok = riak_core_ring_events:add_guarded_handler(antidote_ring_event_handler, []),
             ok = riak_core_node_watcher_events:add_guarded_handler(antidote_node_event_handler, []),
-            ok = antidote_pb_server:spawn([{port, 8087}]),
+            ok = antidote_pb_server:start([{port, 8087}]),
 
             _IsRestart = inter_dc_manager:check_node_restart(),
             case application:get_env(antidote, collect_metric_staleness) of

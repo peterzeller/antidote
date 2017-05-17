@@ -24,9 +24,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--behaviour(riak_api_pb_service).
 
--include_lib("riak_pb/include/antidote_pb.hrl").
+-include_lib("antidote_pb_codec/include/antidote_pb.hrl").
 -include("antidote.hrl").
 
 -export([init/0,
@@ -47,19 +46,19 @@ init() ->
 decode(Code, Bin) ->
     Msg = riak_pb_codec:decode(Code, Bin),
     case Msg of
-        #apbstarttransaction{} ->
+        #'ApbStartTransaction'{} ->
             {ok, Msg, {"antidote.startxn",<<>>}};
-        #apbaborttransaction{} ->
+        #'ApbAbortTransaction'{} ->
             {ok, Msg, {"antidote.aborttxn",<<>>}};
-        #apbcommittransaction{} ->
+        #'ApbCommitTransaction'{} ->
             {ok, Msg, {"antidote.committxn",<<>>}};
-        #apbreadobjects{} ->
+        #'ApbReadObjects'{} ->
             {ok, Msg, {"antidote.readobjects",<<>>}};
-        #apbupdateobjects{} ->
+        #'ApbUpdateObjects'{} ->
             {ok, Msg, {"antidote.updateobjects",<<>>}};
-        #apbstaticupdateobjects{} ->
+        #'ApbStaticUpdateObjects'{} ->
             {ok, Msg, {"antidote.staticupdateobjects",<<>>}};
-        #apbstaticreadobjects{} ->
+        #'ApbStaticReadObjects'{} ->
             {ok, Msg, {"antidote.staticreadobjects",<<>>}}
     end.
 
@@ -67,7 +66,7 @@ decode(Code, Bin) ->
 encode(Message) ->
     {ok, riak_pb_codec:encode(Message)}.
 
-process(#apbstarttransaction{timestamp=BClock, properties = BProperties},
+process(#'ApbStartTransaction'{timestamp=BClock, properties = BProperties},
         State) ->
     Clock = case BClock of
                     undefined -> ignore;
@@ -86,7 +85,7 @@ process(#apbstarttransaction{timestamp=BClock, properties = BProperties},
              State}
     end;
 
-process(#apbaborttransaction{transaction_descriptor=Td}, State) ->
+process(#'ApbAbortTransaction'{transaction_descriptor=Td}, State) ->
     TxId = binary_to_term(Td),
     Response = antidote:abort_transaction(TxId),
     case Response of
@@ -101,7 +100,7 @@ process(#apbaborttransaction{transaction_descriptor=Td}, State) ->
             %%      State}
     end;
 
-process(#apbcommittransaction{transaction_descriptor=Td}, State) ->
+process(#'ApbCommitTransaction'{transaction_descriptor=Td}, State) ->
     TxId = binary_to_term(Td),
     Response = antidote:commit_transaction(TxId),
     case Response of
@@ -113,7 +112,7 @@ process(#apbcommittransaction{transaction_descriptor=Td}, State) ->
              State}
     end;
 
-process(#apbreadobjects{boundobjects=BoundObjects, transaction_descriptor=Td},
+process(#'ApbReadObjects'{boundobjects=BoundObjects, transaction_descriptor=Td},
         State) ->
     Objects = lists:map(fun(O) ->
                                 antidote_pb_codec:decode(bound_object, O) end,
@@ -131,7 +130,7 @@ process(#apbreadobjects{boundobjects=BoundObjects, transaction_descriptor=Td},
              State}
     end;
 
-process(#apbupdateobjects{updates=BUpdates, transaction_descriptor=Td},
+process(#'ApbUpdateObjects'{updates=BUpdates, transaction_descriptor=Td},
         State) ->
     Updates = lists:map(fun(O) ->
                                 antidote_pb_codec:decode(update_object, O) end,
@@ -148,8 +147,8 @@ process(#apbupdateobjects{updates=BUpdates, transaction_descriptor=Td},
             {reply, antidote_pb_codec:encode(operation_response, ok),
              State}
     end;
-process(#apbstaticupdateobjects{
-           transaction=#apbstarttransaction{timestamp=BClock, properties = BProperties},
+process(#'ApbStaticUpdateObjects'{
+           transaction=#'ApbStartTransaction'{timestamp=BClock, properties = BProperties},
            updates=BUpdates},
         State) ->
 
@@ -170,8 +169,8 @@ process(#apbstaticupdateobjects{
             {reply, antidote_pb_codec:encode(commit_response, {ok, CommitTime}),
              State}
     end;
-process(#apbstaticreadobjects{
-           transaction=#apbstarttransaction{timestamp=BClock, properties = BProperties},
+process(#'ApbStaticReadObjects'{
+           transaction=#'ApbStartTransaction'{timestamp=BClock, properties = BProperties},
            objects=BoundObjects},
         State) ->
     Clock = case BClock of
