@@ -75,12 +75,12 @@ generate_downstream(Key, {decrement, {V, _}}, BCounter) ->
 %% Operation is always safe.
 generate_downstream(_Key, {increment, {Amount, _}}, BCounter) ->
     MyDCId = dc_meta_data_utilities:get_my_dc_id(),
-    ?DATA_TYPE:downstream({increment, {Amount, MyDCId}}, BCounter);
+    antidote_crdt:downstream(?DATA_TYPE, {increment, {Amount, MyDCId}}, BCounter);
 
 %% @doc Processes a trasfer operation between two owners of the
 %% counter.
 generate_downstream(_Key, {transfer, {Amount, To, From}}, BCounter) ->
-    ?DATA_TYPE:downstream({transfer, {Amount, To, From}}, BCounter).
+    antidote_crdt:downstream(?DATA_TYPE,{transfer, {Amount, To, From}}, BCounter).
 
 %% @doc Handles a remote transfer request.
 process_transfer({transfer, TransferOp}) ->

@@ -653,7 +653,7 @@ gc_test() ->
     lists:map(
       fun(N) ->
         {ok, Res} = internal_read(Key, Type, vectorclock:from_list([{DC1, N * 10 + 2}]), ignore, [], false, State),
-        ?assertEqual(N, Type:value(Res)),
+        ?assertEqual(N, antidote_crdt:value(Type, Res)),
         op_insert_gc(Key, generate_payload(N * 10, N * 10 + 1, Res, a), State)
       end, lists:seq(0, ?SNAPSHOT_THRESHOLD)),
 
@@ -664,13 +664,13 @@ gc_test() ->
 
     %% Trigger the clean
     {ok, Res10} = internal_read(Key, Type, vectorclock:from_list([{DC1, 102}]), ignore, [], true, State),
-    ?assertEqual(11, Type:value(Res10)),
+    ?assertEqual(11, antidote_crdt:value(Type, Res10)),
 
     op_insert_gc(Key, generate_payload(102, 131, 9, a), State),
 
     %% Be sure you didn't loose any updates
     {ok, Res13} = internal_read(Key, Type, vectorclock:from_list([{DC1, 142}]), ignore, [], true, State),
-    ?assertEqual(14, Type:value(Res13)).
+    ?assertEqual(14, antidote_crdt:value(Type, Res13)).
 
 %% This tests to make sure operation lists can be large and resized
 large_list_test() ->
@@ -683,27 +683,27 @@ large_list_test() ->
 
     %% Make 1000 updates to grow the list, whithout generating a snapshot to perform the gc
     {ok, Res0} = internal_read(Key, Type, vectorclock:from_list([{DC1, 2}]), ignore, [], false, State),
-    ?assertEqual(0, Type:value(Res0)),
+    ?assertEqual(0, antidote_crdt:value(Type, Res0)),
 
     lists:foreach(fun(Val) ->
                       op_insert_gc(Key, generate_payload(10, 11+Val, Res0, mycount), State)
                   end, lists:seq(1, 1000)),
 
     {ok, Res1000} = internal_read(Key, Type, vectorclock:from_list([{DC1, 2000}]), ignore, [], false, State),
-    ?assertEqual(1000, Type:value(Res1000)),
+    ?assertEqual(1000, antidote_crdt:value(Type, Res1000)),
 
     %% Now check everything is ok as the list shrinks from generating new snapshots
     lists:foreach(fun(Val) ->
                   op_insert_gc(Key, generate_payload(10+Val, 11+Val, Res0, mycount), State),
                   {ok, Res} = internal_read(Key, Type, vectorclock:from_list([{DC1, 2000}]), ignore, [], false, State),
-                  ?assertEqual(Val, Type:value(Res))
+                  ?assertEqual(Val, antidote_crdt:value(Type, Res))
               end, lists:seq(1001, 1100)).
 
 generate_payload(SnapshotTime, CommitTime, Prev, Key) ->
     Type = antidote_crdt_counter_pn,
     DC1 = 1,
 
-    {ok, Op1} = Type:downstream({increment, 1}, Prev),
+    {ok, Op1} = antidote_crdt:downstream(Type, {increment, 1}, Prev),
     #clocksi_payload{key = Key,
                      type = Type,
                      op_param = Op1,
@@ -718,11 +718,11 @@ seq_write_test() ->
     Key = mycount,
     Type = antidote_crdt_counter_pn,
     DC1 = 1,
-    S1 = Type:new(),
+    S1 = antidote_crdt:new(Type),
     State = #state{ops_cache = OpsCache, snapshot_cache = SnapshotCache},
 
     %% Insert one increment
-    {ok, Op1} = Type:downstream({increment, 1}, S1),
+    {ok, Op1} = antidote_crdt:downstream(Type, {increment, 1}, S1),
     DownstreamOp1 = #clocksi_payload{key = Key,
                                      type = Type,
                                      op_param = Op1,
@@ -732,9 +732,9 @@ seq_write_test() ->
                                     },
     op_insert_gc(Key, DownstreamOp1, State),
     {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC1, 16}]), ignore, [], false, State),
-    ?assertEqual(1, Type:value(Res1)),
+    ?assertEqual(1, antidote_crdt:value(Type, Res1)),
     %% Insert second increment
-    {ok, Op2} = Type:downstream({increment, 1}, S1),
+    {ok, Op2} = antidote_crdt:downstream(Type, {increment, 1}, S1),
     DownstreamOp2 = DownstreamOp1#clocksi_payload{
                       op_param = Op2,
                       snapshot_time = vectorclock:from_list([{DC1, 16}]),
@@ -743,11 +743,11 @@ seq_write_test() ->
 
     op_insert_gc(Key, DownstreamOp2, State),
     {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC1, 21}]), ignore, [], false, State),
-    ?assertEqual(2, Type:value(Res2)),
+    ?assertEqual(2, antidote_crdt:value(Type, Res2)),
 
     %% Read old version
     {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1, 16}]), ignore, [], false, State),
-    ?assertEqual(1, Type:value(ReadOld)).
+    ?assertEqual(1, antidote_crdt:value(Type, ReadOld)).
 
 multipledc_write_test() ->
     OpsCache = ets:new(ops_cache, [set]),
@@ -756,12 +756,12 @@ multipledc_write_test() ->
     Type = antidote_crdt_counter_pn,
     DC1 = 1,
     DC2 = 2,
-    S1 = Type:new(),
+    S1 = antidote_crdt:new(Type),
     State = #state{ops_cache = OpsCache, snapshot_cache = SnapshotCache},
 
 
     %% Insert one increment in DC1
-    {ok, Op1} = Type:downstream({increment, 1}, S1),
+    {ok, Op1} = antidote_crdt:downstream(Type, {increment, 1}, S1),
     DownstreamOp1 = #clocksi_payload{key = Key,
                                      type = Type,
                                      op_param = Op1,
@@ -771,10 +771,10 @@ multipledc_write_test() ->
                                     },
     op_insert_gc(Key, DownstreamOp1, State),
     {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC1, 16}, {DC2, 0}]), ignore, [], false, State),
-    ?assertEqual(1, Type:value(Res1)),
+    ?assertEqual(1, antidote_crdt:value(Type, Res1)),
 
     %% Insert second increment in other DC
-    {ok, Op2} = Type:downstream({increment, 1}, S1),
+    {ok, Op2} = antidote_crdt:downstream(Type, {increment, 1}, S1),
     DownstreamOp2 = DownstreamOp1#clocksi_payload{
                       op_param = Op2,
                       snapshot_time = vectorclock:from_list([{DC2, 16}, {DC1, 16}]),
@@ -782,11 +782,11 @@ multipledc_write_test() ->
                       txid = 2},
     op_insert_gc(Key, DownstreamOp2, State),
     {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC1, 16}, {DC2, 21}]), ignore, [], false, State),
-    ?assertEqual(2, Type:value(Res2)),
+    ?assertEqual(2, antidote_crdt:value(Type, Res2)),
 
     %% Read old version
     {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1, 15}, {DC2, 15}]), ignore, [], false, State),
-    ?assertEqual(1, Type:value(ReadOld)).
+    ?assertEqual(1, antidote_crdt:value(Type, ReadOld)).
 
 concurrent_write_test() ->
     OpsCache = ets:new(ops_cache, [set]),
@@ -795,11 +795,11 @@ concurrent_write_test() ->
     Type = antidote_crdt_counter_pn,
     DC1 = local,
     DC2 = remote,
-    S1 = Type:new(),
+    S1 = antidote_crdt:new(Type),
     State = #state{ops_cache = OpsCache, snapshot_cache = SnapshotCache},
 
     %% Insert one increment in DC1
-    {ok, Op1} = Type:downstream({increment, 1}, S1),
+    {ok, Op1} = antidote_crdt:downstream(Type, {increment, 1}, S1),
     DownstreamOp1 = #clocksi_payload{key = Key,
                                      type = Type,
                                      op_param = Op1,
@@ -808,10 +808,10 @@ concurrent_write_test() ->
                                      txid = 1},
     op_insert_gc(Key, DownstreamOp1, State),
     {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC2, 1}, {DC1, 0}]), ignore, [], false, State),
-    ?assertEqual(1, Type:value(Res1)),
+    ?assertEqual(1, antidote_crdt:value(Type, Res1)),
 
     %% Another concurrent increment in other DC
-    {ok, Op2} = Type:downstream({increment, 1}, S1),
+    {ok, Op2} = antidote_crdt:downstream(Type, {increment, 1}, S1),
     DownstreamOp2 = #clocksi_payload{ key = Key,
                                       type = Type,
                                       op_param = Op2,
@@ -822,15 +822,15 @@ concurrent_write_test() ->
 
     %% Read different snapshots
     {ok, ReadDC1} = internal_read(Key, Type, vectorclock:from_list([{DC1, 1}, {DC2, 0}]), ignore, [], false, State),
-    ?assertEqual(1, Type:value(ReadDC1)),
+    ?assertEqual(1, antidote_crdt:value(Type, ReadDC1)),
     io:format("Result1 = ~p", [ReadDC1]),
     {ok, ReadDC2} = internal_read(Key, Type, vectorclock:from_list([{DC1, 0}, {DC2, 1}]), ignore, [], false, State),
     io:format("Result2 = ~p", [ReadDC2]),
-    ?assertEqual(1, Type:value(ReadDC2)),
+    ?assertEqual(1, antidote_crdt:value(Type, ReadDC2)),
 
     %% Read snapshot including both increments
     {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC2, 1}, {DC1, 1}]), ignore, [], false, State),
-    ?assertEqual(2, Type:value(Res2)).
+    ?assertEqual(2, antidote_crdt:value(Type, Res2)).
 
 %% Check that a read to a key that has never been read or updated, returns the CRDTs initial value
 %% E.g., for a gcounter, return 0.
@@ -840,6 +840,6 @@ read_nonexisting_key_test() ->
     State = #state{ops_cache = OpsCache, snapshot_cache = SnapshotCache},
     Type = antidote_crdt_counter_pn,
     {ok, ReadResult} = internal_read(key, Type, vectorclock:from_list([{dc1, 1}, {dc2, 0}]), ignore, [], false, State),
-    ?assertEqual(0, Type:value(ReadResult)).
+    ?assertEqual(0, antidote_crdt:value(Type, ReadResult)).
 
 -endif.

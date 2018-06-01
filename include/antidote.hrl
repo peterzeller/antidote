@@ -178,11 +178,11 @@
 %%---------------------------------------------------------------------
 -type actor() :: term().
 -type key() :: term().
--type type() :: atom().
+-type type() :: antidote_crdt:type().
 -type op_name() :: atom().
 -type op_param() :: term().
--type op() :: {op_name(), op_param()}.
--type effect() :: term().
+-type op() :: antidote_crdt:update().
+-type effect() :: antidote_crdt:effect().
 
 -type dcid() :: 'undefined' | {atom(),tuple()}. %% TODO, is this the only structure that is returned by riak_core_ring:cluster_name(Ring)?
 -type snapshot_time() :: vectorclock:vectorclock().
@@ -226,7 +226,7 @@
 -type partition_id() :: ets:tid() | integer(). % TODO 19 adding integer basically makes the tid type non-opaque, because some places of the code depend on it being an integer. This dependency should be removed, if possible.
 -type log_id() :: [partition_id()].
 -type bucket() :: term().
--type snapshot() :: term().
+-type snapshot() :: antidote_crdt:crdt().
 
 -type tx() :: #transaction{}.
 -type cache_id() :: ets:tab().

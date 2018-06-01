@@ -270,7 +270,7 @@ materialize_eager(Type, Snapshot, Ops) ->
 materializer_clocksi_test()->
     Type = antidote_crdt_counter_pn,
     PNCounter = new(Type),
-    ?assertEqual(0, Type:value(PNCounter)),
+    ?assertEqual(0, antidote_crdt:value(Type, PNCounter)),
     %%  need to add the snapshot time for these for the test to pass
     Op1 = #clocksi_payload{key = abc, type = Type,
                            op_param = 2,
@@ -292,16 +292,16 @@ materializer_clocksi_test()->
     {ok, PNCounter2, 3, CommitTime2, _SsSave, _} = materialize(Type,
                                                             ignore, vectorclock:from_list([{1, 3}]),
                                                             SS),
-    ?assertEqual({4, vectorclock:from_list([{1, 3}])}, {Type:value(PNCounter2), CommitTime2}),
+    ?assertEqual({4, vectorclock:from_list([{1, 3}])}, {antidote_crdt:value(Type, PNCounter2), CommitTime2}),
     {ok, PNcounter3, 4, CommitTime3, _SsSave1, _} = materialize(Type,
                                                              ignore, vectorclock:from_list([{1, 4}]),
                                                              SS),
-    ?assertEqual({6, vectorclock:from_list([{1, 4}])}, {Type:value(PNcounter3), CommitTime3}),
+    ?assertEqual({6, vectorclock:from_list([{1, 4}])}, {antidote_crdt:value(Type, PNcounter3), CommitTime3}),
 
     {ok, PNcounter4, 4, CommitTime4, _SsSave2, _} = materialize(Type,
                                                             ignore, vectorclock:from_list([{1, 7}]),
                                                             SS),
-    ?assertEqual({6, vectorclock:from_list([{1, 4}])}, {Type:value(PNcounter4), CommitTime4}).
+    ?assertEqual({6, vectorclock:from_list([{1, 4}])}, {antidote_crdt:value(Type, PNcounter4), CommitTime4}).
 
 %% This test tests when a a snapshot is generated that does not include all of the updates in the
 %% list of operations, precisely in the case where an operation is not taken, but the operations to
@@ -310,7 +310,7 @@ materializer_clocksi_test()->
 materializer_missing_op_test() ->
     Type = antidote_crdt_counter_pn,
     PNCounter = new(Type),
-    ?assertEqual(0, Type:value(PNCounter)),
+    ?assertEqual(0, antidote_crdt:value(Type, PNCounter)),
     Op1 = #clocksi_payload{key = abc, type = Type,
                            op_param = 1,
                            commit_time = {1, 1}, txid = 1, snapshot_time=vectorclock:from_list([{1, 1}, {2, 1}])},
@@ -330,14 +330,14 @@ materializer_missing_op_test() ->
     {ok, PNCounter2, LastOp, CommitTime2, _SsSave, _} = materialize(Type,
                                                                  ignore, vectorclock:from_list([{1, 3}, {2, 1}]),
                                                                  SS),
-    ?assertEqual({3, vectorclock:from_list([{1, 3}, {2, 1}])}, {Type:value(PNCounter2), CommitTime2}),
+    ?assertEqual({3, vectorclock:from_list([{1, 3}, {2, 1}])}, {antidote_crdt:value(Type, PNCounter2), CommitTime2}),
 
     SS2 = #snapshot_get_response{snapshot_time = CommitTime2, ops_list = Ops,
                                 materialized_snapshot = #materialized_snapshot{last_op_id = LastOp, value = PNCounter2}},
     {ok, PNCounter3, 4, CommitTime3, _SsSave, _} = materialize(Type,
                                                             ignore, vectorclock:from_list([{1, 3}, {2, 2}]),
                                                             SS2),
-    ?assertEqual({4, vectorclock:from_list([{1, 3}, {2, 2}])}, {Type:value(PNCounter3), CommitTime3}).
+    ?assertEqual({4, vectorclock:from_list([{1, 3}, {2, 2}])}, {antidote_crdt:value(Type, PNCounter3), CommitTime3}).
 
 %% This test tests the case when there are updates that only snapshots that contain entries from one of the DCs.
 %% This can happen for example if an update is commited before the DCs have been connected.
@@ -345,7 +345,7 @@ materializer_missing_op_test() ->
 materializer_missing_dc_test() ->
     Type = antidote_crdt_counter_pn,
     PNCounter = new(Type),
-    ?assertEqual(0, Type:value(PNCounter)),
+    ?assertEqual(0, antidote_crdt:value(Type, PNCounter)),
     Op1 = #clocksi_payload{key = abc, type = Type,
                            op_param = 1,
                            commit_time = {1, 1}, txid = 1, snapshot_time=vectorclock:from_list([{1, 1}])},
@@ -365,31 +365,31 @@ materializer_missing_dc_test() ->
     {ok, PNCounterA, LastOpA, CommitTimeA, _SsSave, _} = materialize(Type,
                                                                   ignore, vectorclock:from_list([{1, 3}]),
                                                                   SS),
-    ?assertEqual({3, vectorclock:from_list([{1, 3}])}, {Type:value(PNCounterA), CommitTimeA}),
+    ?assertEqual({3, vectorclock:from_list([{1, 3}])}, {antidote_crdt:value(Type, PNCounterA), CommitTimeA}),
 
     SS2 = #snapshot_get_response{snapshot_time = CommitTimeA, ops_list = Ops,
                                 materialized_snapshot = #materialized_snapshot{last_op_id = LastOpA, value = PNCounterA}},
     {ok, PNCounterB, 4, CommitTimeB, _SsSave, _} = materialize(Type,
                                                             ignore, vectorclock:from_list([{1, 3}, {2, 2}]),
                                                             SS2),
-    ?assertEqual({4, vectorclock:from_list([{1, 3}, {2, 2}])}, {Type:value(PNCounterB), CommitTimeB}),
+    ?assertEqual({4, vectorclock:from_list([{1, 3}, {2, 2}])}, {antidote_crdt:value(Type, PNCounterB), CommitTimeB}),
 
     {ok, PNCounter2, LastOp, CommitTime2, _SsSave, _} = materialize(Type,
                                                                  ignore, vectorclock:from_list([{1, 3}, {2, 1}]),
                                                                  SS),
-    ?assertEqual({3, vectorclock:from_list([{1, 3}])}, {Type:value(PNCounter2), CommitTime2}),
+    ?assertEqual({3, vectorclock:from_list([{1, 3}])}, {antidote_crdt:value(Type, PNCounter2), CommitTime2}),
 
     SS3 = #snapshot_get_response{snapshot_time = CommitTime2, ops_list = Ops,
                                 materialized_snapshot = #materialized_snapshot{last_op_id = LastOp, value = PNCounter2}},
     {ok, PNCounter3, 4, CommitTime3, _SsSave, _} = materialize(Type,
                                                             ignore, vectorclock:from_list([{1, 3}, {2, 2}]),
                                                             SS3),
-    ?assertEqual({4, vectorclock:from_list([{1, 3}, {2, 2}])}, {Type:value(PNCounter3), CommitTime3}).
+    ?assertEqual({4, vectorclock:from_list([{1, 3}, {2, 2}])}, {antidote_crdt:value(Type, PNCounter3), CommitTime3}).
 
 materializer_clocksi_concurrent_test() ->
     Type = antidote_crdt_counter_pn,
     PNCounter = new(Type),
-    ?assertEqual(0, Type:value(PNCounter)),
+    ?assertEqual(0, antidote_crdt:value(Type, PNCounter)),
     Op1 = #clocksi_payload{key = abc, type = Type,
                            op_param = 2,
                            commit_time = {1, 1}, txid = 1, snapshot_time=vectorclock:from_list([{1, 1}, {2, 1}])},
@@ -406,39 +406,39 @@ materializer_clocksi_concurrent_test() ->
                                       vectorclock:from_list([{2, 2}, {1, 2}]),
                                       Ops, ignore, ignore, false, 0),
     {ok, PNCounter3, _} = apply_operations(Type, PNCounter, 0, PNCounter2),
-    ?assertEqual({4, vectorclock:from_list([{1, 2}, {2, 2}])}, {Type:value(PNCounter3), CommitTime2}),
+    ?assertEqual({4, vectorclock:from_list([{1, 2}, {2, 2}])}, {antidote_crdt:value(Type, PNCounter3), CommitTime2}),
     Snapshot=new(Type),
     SS = #snapshot_get_response{snapshot_time = ignore, ops_list = Ops,
                                 materialized_snapshot = #materialized_snapshot{last_op_id = 0, value = Snapshot}},
     {ok, PNcounter3, 1, CommitTime3, _SsSave1, _} = materialize(Type, ignore,
                                    vectorclock:from_list([{1, 2}, {2, 1}]), SS),
-    ?assertEqual({3, vectorclock:from_list([{1, 2}, {2, 1}])}, {Type:value(PNcounter3), CommitTime3}),
+    ?assertEqual({3, vectorclock:from_list([{1, 2}, {2, 1}])}, {antidote_crdt:value(Type, PNcounter3), CommitTime3}),
     {ok, PNcounter4, 2, CommitTime4, _SsSave2, _} = materialize(Type, ignore,
                                    vectorclock:from_list([{1, 1}, {2, 2}]), SS),
-    ?assertEqual({3, vectorclock:from_list([{1, 1}, {2, 2}])}, {Type:value(PNcounter4), CommitTime4}),
+    ?assertEqual({3, vectorclock:from_list([{1, 1}, {2, 2}])}, {antidote_crdt:value(Type, PNcounter4), CommitTime4}),
     {ok, PNcounter5, 1, CommitTime5, _SsSave3, _} = materialize(Type, ignore,
                                    vectorclock:from_list([{1, 1}, {2, 1}]), SS),
-    ?assertEqual({2, vectorclock:from_list([{1, 1}, {2, 1}])}, {Type:value(PNcounter5), CommitTime5}).
+    ?assertEqual({2, vectorclock:from_list([{1, 1}, {2, 1}])}, {antidote_crdt:value(Type, PNcounter5), CommitTime5}).
 
 %% Testing gcounter with empty update log
 materializer_clocksi_noop_test() ->
     Type = antidote_crdt_counter_pn,
     PNCounter = new(Type),
-    ?assertEqual(0, Type:value(PNCounter)),
+    ?assertEqual(0, antidote_crdt:value(Type, PNCounter)),
     Ops = [],
     {ok, PNCounter2, 0, ignore, _SsSave} = materialize_intern(Type, [], 0, 0, ignore,
                                                     vectorclock:from_list([{1, 1}]),
                                                     Ops, ignore, ignore, false, 0),
     {ok, PNCounter3, _} = apply_operations(Type, PNCounter, 0, PNCounter2),
-    ?assertEqual(0, Type:value(PNCounter3)).
+    ?assertEqual(0, antidote_crdt:value(Type, PNCounter3)).
 
 materializer_eager_clocksi_test()->
     Type = antidote_crdt_counter_pn,
     PNCounter = new(Type),
-    ?assertEqual(0, Type:value(PNCounter)),
+    ?assertEqual(0, antidote_crdt:value(Type, PNCounter)),
     % test - no ops
     PNCounter2 = materialize_eager(Type, PNCounter, []),
-    ?assertEqual(0, Type:value(PNCounter2)),
+    ?assertEqual(0, antidote_crdt:value(Type, PNCounter2)),
     % test - several ops
     Op1 = 1,
     Op2 = 2,
@@ -446,7 +446,7 @@ materializer_eager_clocksi_test()->
     Op4 = 4,
     Ops = [Op1, Op2, Op3, Op4],
     PNCounter3 = materialize_eager(Type, PNCounter, Ops),
-    ?assertEqual(10, Type:value(PNCounter3)).
+    ?assertEqual(10, antidote_crdt:value(Type, PNCounter3)).
 
 is_op_in_snapshot_test() ->
     Type = antidote_crdt_counter_pn,

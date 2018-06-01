@@ -35,14 +35,14 @@
 %% @doc Creates an empty CRDT
 -spec create_snapshot(type()) -> snapshot().
 create_snapshot(Type) ->
-    Type:new().
+    antidote_crdt:new(Type).
 
 %% @doc Applies an downstream effect to a snapshot of a crdt.
 %%      This function yields an error if the crdt does not have a corresponding update operation.
 -spec update_snapshot(type(), snapshot(), effect()) -> {ok, snapshot()} | {error, {unexpected_operation, effect(), type()}}.
 update_snapshot(Type, Snapshot, Op) ->
     try
-        Type:update(Op, Snapshot)
+        antidote_crdt:update(Type, Op, Snapshot)
     catch
         _:_ ->
             {error, {unexpected_operation, Op, Type}}
@@ -79,7 +79,7 @@ check_operation(Op) ->
     case Op of
         {update, {_, Type, Update}} ->
             antidote_crdt:is_type(Type) andalso
-                Type:is_operation(Update);
+                antidote_crdt:is_operation(Type, Update);
         {read, {_, Type}} ->
             antidote_crdt:is_type(Type);
         _ ->
@@ -103,32 +103,32 @@ belongs_to_snapshot_op(SSTime, {OpDc, OpCommitTime}, OpSs) ->
 update_pncounter_test() ->
     Type = antidote_crdt_counter_pn,
     Counter = create_snapshot(Type),
-    ?assertEqual(0, Type:value(Counter)),
+    ?assertEqual(0, antidote_crdt:value(Type, Counter)),
     Op = 1,
     {ok, Counter2} = update_snapshot(Type, Counter, Op),
-    ?assertEqual(1, Type:value(Counter2)).
+    ?assertEqual(1, antidote_crdt:value(Type, Counter2)).
 
 %% Testing pn_counter with update log
 materializer_counter_withlog_test() ->
     Type = antidote_crdt_counter_pn,
     Counter = create_snapshot(Type),
-    ?assertEqual(0, Type:value(Counter)),
+    ?assertEqual(0, antidote_crdt:value(Type, Counter)),
     Ops = [1,
            1,
            2,
            3
           ],
     Counter2 = materialize_eager(Type, Counter, Ops),
-    ?assertEqual(7, Type:value(Counter2)).
+    ?assertEqual(7, antidote_crdt:value(Type, Counter2)).
 
 %% Testing counter with empty update log
 materializer_counter_emptylog_test() ->
     Type = antidote_crdt_counter_pn,
     Counter = create_snapshot(Type),
-    ?assertEqual(0, Type:value(Counter)),
+    ?assertEqual(0, antidote_crdt:value(Type, Counter)),
     Ops = [],
     Counter2 = materialize_eager(Type, Counter, Ops),
-    ?assertEqual(0, Type:value(Counter2)).
+    ?assertEqual(0, antidote_crdt:value(Type, Counter2)).
 
 %% Testing non-existing crdt
 materializer_error_nocreate_test() ->
@@ -138,7 +138,7 @@ materializer_error_nocreate_test() ->
 materializer_error_invalidupdate_test() ->
     Type = antidote_crdt_counter_pn,
     Counter = create_snapshot(Type),
-    ?assertEqual(0, Type:value(Counter)),
+    ?assertEqual(0, antidote_crdt:value(Type, Counter)),
     Ops = [{non_existing_op_type, {non_existing_op, actor1}}],
     ?assertEqual({error, {unexpected_operation,
                     {non_existing_op_type, {non_existing_op, actor1}},
