@@ -9,6 +9,12 @@
 Start a local node with the command
 
 ```
+docker run --rm -it -p "8087:8087" antidotedb/antidote
+```
+
+or if you prefer to run Antidote in detached mode:
+
+```
 docker run -d --name antidote -p "8087:8087" antidotedb/antidote
 ```
 
@@ -25,3 +31,13 @@ For building the Docker image on your local machine, use the following command
 ```
 docker build -f Dockerfiles/Dockerfile -t antidotedb/antidote Dockerfiles
 ```
+
+## Running with Docker Toolbox (Windows)
+
+Please note that Docker Toolbox is deprecated in favor of "Docker for Windows", for which these steps are not necessary.
+
+To run this image with Docker Toolbox two changes in the Docker VirtualBox configuration are necessary.
+Open VirtualBox and
+
+- change the number of cores for your VM to at least two
+- edit the network settings of your VM and enable port forwarding from port 8087 to 8087
