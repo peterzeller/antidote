@@ -346,16 +346,7 @@ committing_2pc({call, Sender}, commit, State = #coord_state{transaction = Transa
 %%      partitions in order to compute the final tx timestamp (the maximum
 %%      of the received prepare_time).
 receive_prepared(cast, {prepared, ReceivedPrepareTime}, State) ->
-    case process_prepared(ReceivedPrepareTime, State) of
-        {receive_committed, Data} ->
-            {next_state, receive_committed, Data};
-        {receive_prepared, Data} ->
-            {next_state, receive_prepared, Data};
-        {committing_2pc, Data, Actions = [{reply, _, _}]} ->
-            {next_state, committing_2pc, Data, Actions};
-        {committing, Data, Actions = [{reply, _, _}]} ->
-            {next_state, committing, Data, Actions}
-    end;
+    process_prepared(ReceivedPrepareTime, State);
 
 receive_prepared(cast, abort, State) ->
     receive_prepared(cast, timeout, State);
@@ -1071,42 +1062,31 @@ process_prepared(ReceivedPrepareTime, State = #coord_state{num_to_ack = NumToAck
     transaction = Transaction,
     updated_partitions = UpdatedPartitions}) ->
     MaxPrepareTime = max(PrepareTime, ReceivedPrepareTime),
-    case NumToAck of 1 ->
-        case CommitProtocol of
-            two_phase ->
-                case FullCommit of
-                    true ->
-                        ok = ?CLOCKSI_VNODE:commit(UpdatedPartitions, Transaction, MaxPrepareTime),
-                        {receive_committed,
-                            State#coord_state{num_to_ack = length(UpdatedPartitions), commit_time = MaxPrepareTime, state = committing}};
-                    false ->
-                        {committing_2pc, State#coord_state{
-                            prepare_time = MaxPrepareTime,
+    case NumToAck of
+        1 ->
+            % this is the last ack we expected
+            case FullCommit of
+                true ->
+                    ok = ?CLOCKSI_VNODE:commit(UpdatedPartitions, Transaction, MaxPrepareTime),
+                    {next_state, receive_committed,
+                        State#coord_state{
+                            num_to_ack = length(UpdatedPartitions),
                             commit_time = MaxPrepareTime,
-                            state = committing
-                        }, [{reply, From, {ok, MaxPrepareTime}}]}
-                end;
-            _ ->
-                case FullCommit of
-                    true ->
-                        ok = ?CLOCKSI_VNODE:commit(UpdatedPartitions, Transaction, MaxPrepareTime),
-                        {receive_committed,
-                            State#coord_state{
-                                num_to_ack = length(UpdatedPartitions),
-                                commit_time = MaxPrepareTime,
-                                state = committing
-                            }
-                        };
-                    false ->
-                        {committing, State#coord_state{
-                            prepare_time = MaxPrepareTime,
-                            commit_time = MaxPrepareTime,
-                            state = committing
-                        }, [{reply, From, {ok, MaxPrepareTime}}]}
-                end
-        end;
+                            state = committing}};
+                false ->
+                    NextState =
+                        case CommitProtocol of
+                            two_phase -> committing_2pc;
+                            _ -> committing
+                        end,
+                    {next_state, NextState, State#coord_state{
+                        prepare_time = MaxPrepareTime,
+                        commit_time = MaxPrepareTime,
+                        state = committing
+                    }, [{reply, From, {ok, MaxPrepareTime}}]}
+            end;
         _ ->
-            {receive_prepared, State#coord_state{num_to_ack = NumToAck - 1, prepare_time = MaxPrepareTime}}
+            {next_state, receive_prepared, State#coord_state{num_to_ack = NumToAck - 1, prepare_time = MaxPrepareTime}}
     end.
 
 
