@@ -126,6 +126,8 @@ update_objects(ClientCausalVC, Properties, Updates, StayAlive) ->
         {error, Reason} -> {error, Reason}
     end.
 
+-spec read_objects(snapshot_time() | ignore, txn_properties(), [bound_object()]) ->
+    {ok, list(), vectorclock()} | {error, reason()}.
 read_objects(Clock, Properties, Objects) ->
     obtain_objects(Clock, Properties, Objects, false, object_value).
 get_objects(Clock, Properties, Objects) ->

@@ -616,11 +616,9 @@ init_state(StayAlive, FullCommit, IsStatic, Properties) ->
 %% @doc TODO
 -spec start_tx_internal(pid(), snapshot_time(), proplists:proplist(), #coord_state{}) -> {ok, #coord_state{}} | {error, any()}.
 start_tx_internal(From, ClientClock, Properties, State = #coord_state{stay_alive = StayAlive, is_static = IsStatic}) ->
-    Locks = #{
-        shared_locks => proplists:get_value(shared_locks, Properties, []),
-        exclusive_locks => proplists:get_value(exclusive_locks, Properties, [])
-    },
-    case antidote_locks:obtain_locks(self(), ClientClock, Locks) of
+    Locks = [{Lock, shared_lock} || Lock <- proplists:get_value(shared_locks, Properties, [])]
+        ++ [{Lock, exclusive_lock} || Lock <- proplists:get_value(exclusive_locks, Properties, [])],
+    case antidote_locks:obtain_locks(ClientClock, Locks) of
         {error, Reason} ->
             {error, Reason};
         {ok, ClientClock2} ->
@@ -837,7 +835,7 @@ reply_to_client(State = #coord_state{
                     _ ->
                         Transaction#transaction.vec_snapshot_time
                 end,
-            antidote_locks:release_locks(self(), CommitSnapshot, Locks),
+            antidote_locks:release_locks(CommitSnapshot, Locks),
             case is_pid(Node) of
                 false ->
                     gen_statem:reply(Node, Reply);

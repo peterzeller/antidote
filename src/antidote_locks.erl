@@ -33,40 +33,41 @@
 -include("antidote.hrl").
 
 %% API
--export([obtain_locks/3, release_locks/3]).
+-export([obtain_locks/2, release_locks/2]).
 
--type lock_spec() :: #{
-    shared_locks => list(binary()),
-    exclusive_locks => list(binary())
-}.
+
+-export_type([lock/0, lock_spec/0]).
+
+-opaque lock() :: binary().
+
+-type lock_kind() :: shared | exclusive.
+-type lock_spec_item() :: {lock(), lock_kind()}.
+-type lock_spec() :: list(lock_spec_item()).
 
 %% @doc tries to obtain the given locks
-%% Proc: The process that will work with the locks.
-%%       We assume that the locks are only needed as long as this process is alive.
-%%       However, there can be multiple processes at the same time using the locks.
+%% We assume that the locks are only needed as long as the calling process is alive.
+%% However, there can be multiple processes at the same time using the locks.
 %% ClientClock: The minimum time for which locks are requested
 %% Locks: The locks to aquire
 %% Returns:
 %%  {ok, SnapshotTime}:
 %%      In this case it is guaranteed that the locks are acquired and
 %%      protect the state since SnapshotTime.
--spec obtain_locks(pid(), snapshot_time(), lock_spec()) -> {ok, snapshot_time()} | {error, any()}.
-obtain_locks(_Proc, ClientClock, Locks) ->
-    SharedLocks = maps:get(shared_locks, Locks, []),
-    ExclusiveLocks = maps:get(exclusive_locks, Locks, []),
-    case SharedLocks == [] andalso ExclusiveLocks == [] of
+-spec obtain_locks(snapshot_time(), lock_spec()) -> {ok, snapshot_time()} | {error, any()}.
+obtain_locks(ClientClock, Locks) ->
+    case Locks == [] of
         true ->
             % no locks required ->
             {ok, ClientClock};
         false ->
+            antidote_lock_server:request_locks(ClientClock, Locks),
             {error, 'locks not implemented yet'}
     end.
 
 %% @doc releases the locks
-%% Proc: The process that no longer uses the locks.
 %% CommitTime: The last commit timestamp of an operation executed while holding the locks
 %% Locks: The locks to release
--spec release_locks(pid(), snapshot_time(), lock_spec()) -> ok.
-release_locks(_Proc, _CommitTime, _Locks) -> ok.
+-spec release_locks(snapshot_time(), lock_spec()) -> ok.
+release_locks(_CommitTime, _Locks) -> ok.
 
 
