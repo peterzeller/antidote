@@ -48,7 +48,7 @@
 %% We assume that the locks are only needed as long as the calling process is alive.
 %% However, there can be multiple processes at the same time using the locks.
 %% ClientClock: The minimum time for which locks are requested
-%% Locks: The locks to aquire
+%% Locks: The locks to acquire
 %% Returns:
 %%  {ok, SnapshotTime}:
 %%      In this case it is guaranteed that the locks are acquired and

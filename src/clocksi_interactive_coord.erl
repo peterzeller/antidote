@@ -99,7 +99,6 @@
     execute_op/3,
     start_tx/3,
 
-    committing_2pc/3,
     committing/3,
     committing_single/3
     , reply_to_client/1]).
@@ -321,24 +320,6 @@ execute_op({call, Sender}, {update, Args}, State) ->
 
 execute_op({call, Sender}, {OpType, Args}, State) ->
     execute_command(OpType, Args, Sender, State).
-
-%%%== committing_2pc
-
-%% @doc after receiving all prepare_times, send the commit message to all
-%%      updated partitions, and go to the "receive_committed" state.
-%%      This state expects other process to sen the commit message to
-%%      start the commit phase.
-committing_2pc({call, Sender}, commit, State = #coord_state{transaction = Transaction,
-    updated_partitions = UpdatedPartitions,
-    commit_time = CommitTime}) ->
-    NumToAck = length(UpdatedPartitions),
-    case NumToAck of
-        0 ->
-            reply_to_client(State#coord_state{state = committed_read_only, from = Sender});
-        _ ->
-            ok = ?CLOCKSI_VNODE:commit(UpdatedPartitions, Transaction, CommitTime),
-            {next_state, receive_committed, State#coord_state{num_to_ack = NumToAck, from = Sender, state = committing}}
-    end.
 
 %%%== receive_prepared
 
@@ -670,12 +651,7 @@ create_transaction_record(ClientClock, StayAlive, From, _IsStatic, Properties) -
 -spec execute_command(atom(), term(), pid(), #coord_state{}) -> gen_statem:event_handler_result(#coord_state{}).
 execute_command(prepare, Protocol, Sender, State0) ->
     State = State0#coord_state{from=Sender, commit_protocol=Protocol},
-    case Protocol of
-        two_phase ->
-            prepare_2pc(State);
-        _ ->
-            prepare(State)
-    end;
+    prepare(State);
 
 %% @doc Abort the current transaction
 execute_command(abort, _Protocol, Sender, State) ->
@@ -746,30 +722,6 @@ execute_command(update_objects, UpdateOps, Sender, State = #coord_state{transact
     end.
 
 
-%% @doc function called when 2pc is forced independently of the number of partitions
-%%      involved in the txs.
--spec prepare_2pc(#coord_state{}) -> gen_statem:event_handler_result(#coord_state{}).
-prepare_2pc(State = #coord_state{
-    transaction = Transaction,
-    updated_partitions = UpdatedPartitions, full_commit = FullCommit, from = From}) ->
-    case UpdatedPartitions of
-        [] ->
-            SnapshotTime = Transaction#transaction.snapshot_time_local,
-            case FullCommit of
-                false ->
-                    {next_state, committing_2pc, State#coord_state{state = committing, commit_time = SnapshotTime},
-                        [{reply, From, {ok, SnapshotTime}}]};
-                true ->
-                    reply_to_client(State#coord_state{state = committed_read_only})
-            end;
-        [_|_] ->
-            ok = ?CLOCKSI_VNODE:prepare(UpdatedPartitions, Transaction),
-            Num_to_ack = length(UpdatedPartitions),
-            {next_state, receive_prepared,
-                State#coord_state{num_to_ack = Num_to_ack, state = prepared}}
-    end.
-
-
 %% @doc when the transaction has committed or aborted,
 %%       a reply is sent to the client that started the transaction.
 reply_to_client(State = #coord_state{
@@ -829,6 +781,8 @@ reply_to_client(State = #coord_state{
             CommitSnapshot =
                 case Reply of
                     {ok, {_TxId, Clock}} ->
+                        Clock;
+                    {ok, {_TxId, _ReturnAcc, Clock}} ->
                         Clock;
                     {ok, Clock} ->
                         Clock;
@@ -1024,13 +978,14 @@ prepare(State = #coord_state{
     num_to_read=NumToRead,
     full_commit=FullCommit,
     transaction=Transaction,
-    updated_partitions=UpdatedPartitions
+    updated_partitions=UpdatedPartitions,
+    commit_protocol = CommitProtocol
 }) ->
     case UpdatedPartitions of
         [] ->
             SnapshotTimeLocal = Transaction#transaction.snapshot_time_local,
-            case NumToRead of
-                0 ->
+            if
+                CommitProtocol == two_phase orelse NumToRead == 0 ->
                     case FullCommit of
                         true ->
                             reply_to_client(State#coord_state{state = committed_read_only});
@@ -1039,11 +994,11 @@ prepare(State = #coord_state{
                             {next_state, committing, State#coord_state{state = committing, commit_time = SnapshotTimeLocal},
                                 [{reply, From, {ok, SnapshotTimeLocal}}]}
                     end;
-                _ ->
+                true ->
                     {next_state, receive_prepared, State#coord_state{state = prepared}}
             end;
 
-        [_] ->
+        [_] when CommitProtocol /= two_phase ->
             ok = ?CLOCKSI_VNODE:single_commit(UpdatedPartitions, Transaction),
             {next_state, single_committing, State#coord_state{state = committing, num_to_ack = 1}};
 
@@ -1055,7 +1010,7 @@ prepare(State = #coord_state{
 
 
 process_prepared(ReceivedPrepareTime, State = #coord_state{num_to_ack = NumToAck,
-    commit_protocol = CommitProtocol, full_commit = FullCommit,
+    full_commit = FullCommit,
     from = From, prepare_time = PrepareTime,
     transaction = Transaction,
     updated_partitions = UpdatedPartitions}) ->
@@ -1072,12 +1027,7 @@ process_prepared(ReceivedPrepareTime, State = #coord_state{num_to_ack = NumToAck
                             commit_time = MaxPrepareTime,
                             state = committing}};
                 false ->
-                    NextState =
-                        case CommitProtocol of
-                            two_phase -> committing_2pc;
-                            _ -> committing
-                        end,
-                    {next_state, NextState, State#coord_state{
+                    {next_state, committing, State#coord_state{
                         prepare_time = MaxPrepareTime,
                         commit_time = MaxPrepareTime,
                         state = committing
