@@ -67,7 +67,8 @@ obtain_locks(ClientClock, Locks) ->
 %% @doc releases the locks
 %% CommitTime: The last commit timestamp of an operation executed while holding the locks
 %% Locks: The locks to release
--spec release_locks(snapshot_time(), lock_spec()) -> ok.
-release_locks(_CommitTime, _Locks) -> ok.
+-spec release_locks(snapshot_time(), lock_spec()) -> ok | {error, any()}.
+release_locks(_CommitTime, []) -> ok;
+release_locks(_CommitTime, _Locks) -> {error, not_implemented}.
 
 

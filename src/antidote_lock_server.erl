@@ -49,7 +49,7 @@
     code_change/3]).
 
 -define(SERVER, ?MODULE).
--define(BUCKET, <<"__antidote_lock_bucket">>).
+-define(LOCK_BUCKET, <<"__antidote_lock_bucket">>).
 
 % there is one lock-part per datacenter.
 -type lock_crdt_value() :: #{
@@ -113,6 +113,8 @@ request_locks(ClientClock, Locks, NumTries) ->
 %%%===================================================================
 
 init([]) ->
+    % we want to be notified if a transaction holding locks crashes
+    process_flag(trap_exit, true),
     {ok, #state{
         lock_waiting = maps:new(),
         locks_held = maps:new(),
@@ -143,7 +145,10 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 
--spec handle_request_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), #state{}) -> {noreply, #state{}}.
+-spec handle_request_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), #state{}) -> Result
+    when Result :: {reply, {could_not_obtain_logs, any()}, #state{}}
+                 | {reply, ok, #state{}}
+                 | {noreply, #state{}}.
 handle_request_locks(ClientClock, Locks, From, State) ->
     LockObjects = get_lock_objects(Locks),
     AllDcIds = get_all_dc_ids(),
@@ -153,14 +158,19 @@ handle_request_locks(ClientClock, Locks, From, State) ->
             % if we cannot read the locks we fail immediately since waiting
             % would probably take too much time
             {reply, {could_not_obtain_logs, Reason}, State};
-        {ok, LockValuesRaw, ReadClock} ->
+        {ok, LockValuesRaw, _ReadClock} ->
+            % link the requester:
+            % if we crash, then the transaction using the locks should crash as well
+            % if the transaction crashes, we want to know about that to release the lock
+            {FromPid, _} = From,
+            link(FromPid),
             LockValues = [parse_lock_value(V) || V <- LockValuesRaw],
             LockEntries = lists:zip(Locks, LockValues),
-            {LockEntriesOwn, LockEntriesRequired} = lists:partition(owns_lock(AllDcIds, State#state.dc_id), LockEntries),
+            {_LockEntriesOwn, LockEntriesRequired} = lists:partition(owns_lock(AllDcIds, State#state.dc_id), LockEntries),
             case LockEntriesRequired of
                 [] ->
-                    NewState = State#{
-                      locks_held = % TODO update locks_held
+                    NewState = State#state{
+                      locks_held = todo % TODO update locks_held
                     },
                     {reply, ok, NewState};
                 _ ->
@@ -168,7 +178,8 @@ handle_request_locks(ClientClock, Locks, From, State) ->
                     % for shared locks, ask to get own lock back
                     % for exclusive locks, ask everyone to give their lock
 
-                    inter_dc_query:perform_request(),
+                    %inter_dc_query:perform_request(),
+                    NewState = todo,
 
                     % will reply once all locks are acquired
                     {noreply, NewState}
@@ -179,12 +190,12 @@ handle_request_locks(ClientClock, Locks, From, State) ->
 
 -spec get_lock_objects(antidote_locks:lock_spec()) -> list(bound_object()).
 get_lock_objects(Locks) ->
-    [{Key, antidote_crdt_map_rr, ?BUCKET} || {Key, _} <- Locks].
+    [{Key, antidote_crdt_map_rr, ?LOCK_BUCKET} || {Key, _} <- Locks].
 
 
 -spec owns_lock(list(dcid()), dcid()) -> fun(({antidote_locks:lock_spec_item(), lock_crdt_value()}) -> boolean()).
 owns_lock(AllDcIds, DcId) ->
-    fun({{Lock, Kind}, LockValue}) ->
+    fun({{_Lock, Kind}, LockValue}) ->
         LockValueOwners = maps:get(owners, LockValue),
         case Kind of
             shared ->
@@ -197,9 +208,9 @@ owns_lock(AllDcIds, DcId) ->
     end.
 
 -spec parse_lock_value(antidote_crdt_map_rr:value()) -> lock_crdt_value().
-parse_lock_value(V) ->
-    Locks = orddict_get({<<"owners">>, antidote_crdt_map_rr}, V, []),
-    Waiting = orddict_get({<<"waiting">>, antidote_crdt_set_aw}, V, []),
+parse_lock_value(RawV) ->
+    Locks = orddict_get({<<"owners">>, antidote_crdt_map_rr}, RawV, []),
+    Waiting = orddict_get({<<"waiting">>, antidote_crdt_set_aw}, RawV, []),
     #{
         owners => maps:from_list([{binary_to_term(K), binary_to_term(V)} || {{K, _}, V} <- Locks]),
         waiting => [binary_to_term(W) || W <- Waiting]

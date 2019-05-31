@@ -733,8 +733,7 @@ reply_to_client(State = #coord_state{
     commit_time=CommitTime,
     full_commit=FullCommit,
     transaction=Transaction,
-    return_accumulator=ReturnAcc,
-    locks = Locks
+    return_accumulator=ReturnAcc
 }) ->
     TxId = Transaction#transaction.txn_id,
     case From of
@@ -778,18 +777,6 @@ reply_to_client(State = #coord_state{
 %%                        Reason ->
 %%                            {TxId, Reason}
                     end,
-            CommitSnapshot =
-                case Reply of
-                    {ok, {_TxId, Clock}} ->
-                        Clock;
-                    {ok, {_TxId, _ReturnAcc, Clock}} ->
-                        Clock;
-                    {ok, Clock} ->
-                        Clock;
-                    _ ->
-                        Transaction#transaction.vec_snapshot_time
-                end,
-            antidote_locks:release_locks(CommitSnapshot, Locks),
             case is_pid(Node) of
                 false ->
                     gen_statem:reply(Node, Reply);
@@ -974,7 +961,6 @@ async_log_propagation(Partition, TxId, Key, Type, Record) ->
 %%      to the "receive_prepared"state.
 -spec prepare(#coord_state{}) -> gen_statem:event_handler_result(#coord_state{}).
 prepare(State = #coord_state{
-    from=From,
     num_to_read=NumToRead,
     full_commit=FullCommit,
     transaction=Transaction,
@@ -983,25 +969,22 @@ prepare(State = #coord_state{
 }) ->
     case UpdatedPartitions of
         [] ->
-            SnapshotTimeLocal = Transaction#transaction.snapshot_time_local,
             if
-                CommitProtocol == two_phase orelse NumToRead == 0 ->
+                CommitProtocol == two_phase orelse NumToRead == 0 -> %TODO explain this condition, it makes no sense
                     case FullCommit of
                         true ->
-                            reply_to_client(State#coord_state{state = committed_read_only});
-
+                            prepare_done(State, commit_read_only);
                         false ->
-                            {next_state, committing, State#coord_state{state = committing, commit_time = SnapshotTimeLocal},
-                                [{reply, From, {ok, SnapshotTimeLocal}}]}
+                            Transaction = State#coord_state.transaction,
+                            SnapshotTimeLocal = Transaction#transaction.snapshot_time_local,
+                            prepare_done(State, {reply_and_then_commit, SnapshotTimeLocal})
                     end;
                 true ->
                     {next_state, receive_prepared, State#coord_state{state = prepared}}
             end;
 
         [_] when CommitProtocol /= two_phase ->
-            ok = ?CLOCKSI_VNODE:single_commit(UpdatedPartitions, Transaction),
-            {next_state, single_committing, State#coord_state{state = committing, num_to_ack = 1}};
-
+            prepare_done(State, single_committing);
         [_|_] ->
             ok = ?CLOCKSI_VNODE:prepare(UpdatedPartitions, Transaction),
             Num_to_ack = length(UpdatedPartitions),
@@ -1009,29 +992,83 @@ prepare(State = #coord_state{
     end.
 
 
+
+%% This function is called when we are done with the prepare phase.
+%% There are different options to continue the commit phase:
+%% single_committing: special case for when we just touched a single partition
+%% commit_read_only: special case for when we have not updated anything
+%% {reply_and_then_commit, clock_time()}: first reply that we have successfully committed and then try to commit TODO rly?
+%% {normal_commit, clock_time(): wait until all participants have acknowledged the commit and then reply to the client
+-spec prepare_done(#coord_state{}, Action) -> gen_statem:event_handler_result(#coord_state{})
+    when Action :: single_committing | commit_read_only | {reply_and_then_commit, clock_time()} | {normal_commit, clock_time()}.
+prepare_done(State1, Action) ->
+    case before_commit_checks(State1) of
+        {error, Reason} ->
+            abort(State1#coord_state{return_accumulator = {error, Reason}});
+        {ok, State} ->
+            case Action of
+                single_committing ->
+                    UpdatedPartitions = State#coord_state.updated_partitions,
+                    Transaction = State#coord_state.transaction,
+                    ok = ?CLOCKSI_VNODE:single_commit(UpdatedPartitions, Transaction),
+                    {next_state, single_committing, State#coord_state{state = committing, num_to_ack = 1}};
+                commit_read_only ->
+                    reply_to_client(State#coord_state{state = committed_read_only});
+                {reply_and_then_commit, CommitSnapshotTime} ->
+                    From = State#coord_state.from,
+                    {next_state, committing, State#coord_state{
+                        state = committing,
+                        commit_time = CommitSnapshotTime},
+                        [{reply, From, {ok, CommitSnapshotTime}}]};
+                {normal_commit, MaxPrepareTime} ->
+                    UpdatedPartitions = State#coord_state.updated_partitions,
+                    Transaction = State#coord_state.transaction,
+                    ok = ?CLOCKSI_VNODE:commit(UpdatedPartitions, Transaction, MaxPrepareTime),
+                    {next_state, receive_committed,
+                        State#coord_state{
+                            num_to_ack = length(UpdatedPartitions),
+                            commit_time = MaxPrepareTime,
+                            state = committing}}
+            end
+    end.
+
+
+
+
+%% Checks executed before starting the commit phase.
+-spec before_commit_checks(#coord_state{}) -> {ok, #coord_state{}} | {error, any()}.
+before_commit_checks(State) ->
+    Transaction = State#coord_state.transaction,
+    CommitSnapshot =
+        case State#coord_state.updated_partitions of
+            [] ->
+                Transaction#transaction.vec_snapshot_time;
+            _ ->
+                CommitTime = State#coord_state.commit_time,
+                DcId = ?DC_META_UTIL:get_my_dc_id(),
+                ?VECTORCLOCK:set_clock_of_dc(DcId, CommitTime, Transaction#transaction.vec_snapshot_time)
+        end,
+    Locks = State#coord_state.locks,
+    case antidote_locks:release_locks(CommitSnapshot, Locks) of
+        ok ->
+            {ok, State};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+
 process_prepared(ReceivedPrepareTime, State = #coord_state{num_to_ack = NumToAck,
     full_commit = FullCommit,
-    from = From, prepare_time = PrepareTime,
-    transaction = Transaction,
-    updated_partitions = UpdatedPartitions}) ->
+    prepare_time = PrepareTime}) ->
     MaxPrepareTime = max(PrepareTime, ReceivedPrepareTime),
     case NumToAck of
         1 ->
             % this is the last ack we expected
             case FullCommit of
                 true ->
-                    ok = ?CLOCKSI_VNODE:commit(UpdatedPartitions, Transaction, MaxPrepareTime),
-                    {next_state, receive_committed,
-                        State#coord_state{
-                            num_to_ack = length(UpdatedPartitions),
-                            commit_time = MaxPrepareTime,
-                            state = committing}};
+                    prepare_done(State, {normal_commit, MaxPrepareTime});
                 false ->
-                    {next_state, committing, State#coord_state{
-                        prepare_time = MaxPrepareTime,
-                        commit_time = MaxPrepareTime,
-                        state = committing
-                    }, [{reply, From, {ok, MaxPrepareTime}}]}
+                    prepare_done(State, {reply_and_then_commit, MaxPrepareTime})
             end;
         _ ->
             {next_state, receive_prepared, State#coord_state{num_to_ack = NumToAck - 1, prepare_time = MaxPrepareTime}}
