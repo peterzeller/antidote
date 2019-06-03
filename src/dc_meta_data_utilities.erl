@@ -32,26 +32,26 @@
 -include("inter_dc_repl.hrl").
 
 -export([
-         dc_start_success/0,
-         is_restart/0,
-         load_env_meta_data/0,
-         get_env_meta_data/2,
-         store_env_meta_data/2,
-         store_meta_data_name/1,
-         get_meta_data_name/0,
-         get_dc_partitions_detailed/1,
-         get_dc_partitions_dict/1,
-         get_my_dc_id/0,
-         reset_my_dc_id/0,
-         set_dc_partitions/2,
-         get_dc_ids/1,
-         get_key/1,
-         key_as_integer/1,
-         store_dc_descriptors/1,
-         get_dc_descriptors/0,
-         load_partition_meta_data/0,
-         get_num_partitions/0,
-         get_partition_at_index/1]).
+    dc_start_success/0,
+    is_restart/0,
+    load_env_meta_data/0,
+    get_env_meta_data/2,
+    store_env_meta_data/2,
+    store_meta_data_name/1,
+    get_meta_data_name/0,
+    get_dc_partitions_detailed/1,
+    get_dc_partitions_dict/1,
+    get_my_dc_id/0,
+    reset_my_dc_id/0,
+    set_dc_partitions/2,
+    get_dc_ids/1,
+    get_key/1,
+    key_as_integer/1,
+    store_dc_descriptors/1,
+    get_dc_descriptors/0,
+    load_partition_meta_data/0,
+    get_num_partitions/0,
+    get_partition_at_index/1, get_dcs/0]).
 
 
 %% Should be called once a DC has successfully started
@@ -207,6 +207,11 @@ get_dc_descriptors() ->
         error ->
             []
     end.
+
+%% Gets the list of external datacenters
+-spec get_dcs() -> [#descriptor{}].
+get_dcs() ->
+    [DcId || #descriptor{dcid = DcId} <- get_dc_descriptors()].
 
 %% Add information about a DC to the meta_data
 -spec set_dc_partitions([partition_id()], dcid()) -> ok.
