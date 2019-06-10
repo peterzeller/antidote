@@ -69,9 +69,9 @@
     %% for each shared lock: who is currently using it?
     locks_held_shared :: maps:map(antidote_locks:lock(), list(pid())),
     %% for each lock: who is waiting for this lock?
-    lock_waiting :: maps:map(antidote_locks:lock(), list(requester())),
-    %% for each requester: who is it still waiting for?
-    requester_waiting :: maps:map(requester(), antidote_locks:lock())
+    lock_waiting :: maps:map(antidote_locks:lock(), queue:queue(requester())),
+    %% for each requester: which locks is it still waiting for?
+    requester_waiting :: maps:map(requester(), ordsets:ordset(antidote_locks:lock_spec_item()))
 }).
 
 %%%===================================================================
@@ -176,16 +176,14 @@ handle_request_locks(ClientClock, Locks, From, State) ->
             case InterDcRequests of
                 [] ->
                     % we have all locks locally
-                    NewState = State#state{
-                      locks_held_shared = todo % TODO update locks_held
-                    },
-                    {reply, ok, NewState};
+                    NewState = try_acquire_locks(From, ordsets:from_list(Locks), State),
+                    {noreply, NewState};
                 _ ->
                     % tell other data centers that we need locks
                     % for shared locks, ask to get own lock back
                     % for exclusive locks, ask everyone to give their lock
 
-                    Requests =
+                    Requests = todo,
 
                     MyDCId = dc_meta_data_utilities:get_my_dc_id(),
                     OtherDCsIds = AllDcIds -- [MyDCId],
@@ -272,3 +270,33 @@ get_all_dc_ids() ->
     metada.
 
 
+
+-spec try_acquire_locks(requester(), ordsets:ordset(antidote_locks:lock_spec_item()), #state{}) -> #state{}.
+try_acquire_locks(Requester, Locks, State) ->
+    {RequesterPid, _} = Requester,
+    case Locks of
+        [] ->
+            % all locks acquired
+            gen_server:reply(Requester, ok),
+            State;
+        [{Lock, Kind}|LocksRest] ->
+            case Kind of
+                shared ->
+                    case maps:find(Lock, State#state.locks_held_exclusively) of
+                        {ok, _} ->
+                            % lock currently used exclusively -> wait
+                            State#state{
+                                lock_waiting = maps:update_with(Lock, fun(Q) -> queue:in(Requester, Q) end, State#state.lock_waiting),
+                                requester_waiting = maps:put(Requester, Locks, State#state.requester_waiting)
+                            };
+                        error ->
+                            % not used exclusively -> acquire this lock
+                            State2 = State#state{
+                                locks_held_shared = maps:update_with(Lock, fun(L) -> [RequesterPid|L] end, State#state.locks_held_shared)
+                            },
+                            try_acquire_locks(Requester, LocksRest, State2)
+                    end;
+                exclusive ->
+                    todo
+            end
+    end.
