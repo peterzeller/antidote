@@ -597,8 +597,8 @@ init_state(StayAlive, FullCommit, IsStatic, Properties) ->
 %% @doc TODO
 -spec start_tx_internal(pid(), snapshot_time(), proplists:proplist(), #coord_state{}) -> {ok, #coord_state{}} | {error, any()}.
 start_tx_internal(From, ClientClock, Properties, State = #coord_state{stay_alive = StayAlive, is_static = IsStatic}) ->
-    Locks = [{Lock, shared_lock} || Lock <- proplists:get_value(shared_locks, Properties, [])]
-        ++ [{Lock, exclusive_lock} || Lock <- proplists:get_value(exclusive_locks, Properties, [])],
+    Locks = ordsets:from_list([{Lock, shared_lock} || Lock <- proplists:get_value(shared_locks, Properties, [])]
+        ++ [{Lock, exclusive_lock} || Lock <- proplists:get_value(exclusive_locks, Properties, [])]),
     case antidote_locks:obtain_locks(ClientClock, Locks) of
         {error, Reason} ->
             {error, Reason};

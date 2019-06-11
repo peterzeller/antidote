@@ -42,7 +42,7 @@
 
 -type lock_kind() :: shared | exclusive.
 -type lock_spec_item() :: {lock(), lock_kind()}.
--type lock_spec() :: list(lock_spec_item()).
+-type lock_spec() :: ordsets:ordset(lock_spec_item()).
 
 %% @doc tries to obtain the given locks
 %% We assume that the locks are only needed as long as the calling process is alive.
@@ -60,8 +60,7 @@ obtain_locks(ClientClock, Locks) ->
             % no locks required ->
             {ok, ClientClock};
         false ->
-            antidote_lock_server:request_locks(ClientClock, Locks),
-            {error, 'locks not implemented yet'}
+            antidote_lock_server:request_locks(ClientClock, Locks)
     end.
 
 %% @doc releases the locks
@@ -69,6 +68,7 @@ obtain_locks(ClientClock, Locks) ->
 %% Locks: The locks to release
 -spec release_locks(snapshot_time(), lock_spec()) -> ok | {error, any()}.
 release_locks(_CommitTime, []) -> ok;
-release_locks(_CommitTime, _Locks) -> {error, not_implemented}.
+release_locks(CommitTime, Locks) ->
+    antidote_lock_server:release_locks(CommitTime, Locks).
 
 
