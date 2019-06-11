@@ -61,20 +61,6 @@ waiting => list({Requester :: dcid(), antidote_locks:lock_kind(), RequestTime ::
 }.
 -type requester() :: {pid(), Tag :: term()}.
 
--record(state, {
-    %% own datacenter id
-    dc_id :: dcid(),
-    %% for each exclusively used lock: who is currently using it?
-    locks_held_exclusively :: #{antidote_locks:lock() => pid()},
-    %% for each shared lock: who is currently using it?
-    locks_held_shared :: #{antidote_locks:lock() => list(pid())},
-    %% for each lock: who is waiting for this lock?
-    lock_waiting :: #{antidote_locks:lock() => queue:queue(requester())},
-    %% for each lock: which remote datacenter is waiting for this lock?
-    lock_waiting_remote :: #{antidote_locks:lock() =>  [{#request_locks_remote{}, requester()}]},
-    %% for each requester: which locks is it still waiting for?
-    requester_waiting :: #{requester() => antidote_locks:lock_spec()}
-}).
 
 -record(request_locks, {
     client_clock :: snapshot_time(),
@@ -149,12 +135,7 @@ request_locks_remote(Req) ->
 init([]) ->
     % we want to be notified if a transaction holding locks crashes
     process_flag(trap_exit, true),
-    {ok, #state{
-        lock_waiting = maps:new(),
-        locks_held_exclusively = maps:new(),
-        locks_held_shared = maps:new(),
-        requester_waiting = maps:new()
-    }}.
+    {ok, antidote_lock_server_state:initial()}.
 
 handle_call(#request_locks{client_clock = ClientClock, locks = Locks}, From, State) ->
     handle_request_locks(ClientClock, Locks, From, State);
@@ -184,10 +165,10 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 
--spec handle_request_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), #state{}) -> Result
-    when Result :: {reply, {could_not_obtain_logs, any()}, #state{}}
-| {reply, ok, #state{}}
-| {noreply, #state{}}.
+-spec handle_request_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), antidote_lock_server_state:state()) -> Result
+    when Result :: {reply, {could_not_obtain_logs, any()}, antidote_lock_server_state:state()}
+| {reply, ok, antidote_lock_server_state:state()}
+| {noreply, antidote_lock_server_state:state()}.
 handle_request_locks(ClientClock, Locks, From, State) ->
     LockObjects = get_lock_objects(Locks),
     case cure:read_objects(ClientClock, [], LockObjects) of
@@ -208,7 +189,8 @@ handle_request_locks(ClientClock, Locks, From, State) ->
             LockValues = [parse_lock_value(V) || V <- LockValuesRaw],
             LockEntries = lists:zip(Locks, LockValues),
 
-            RequestsByDc = requests_for_missing_locks(AllDcIds, tate#state.dc_id, LockEntries),
+            MyDcId = antidote_lock_server_state:my_dc_id(State),
+            RequestsByDc = requests_for_missing_locks(AllDcIds, MyDcId, LockEntries),
             case maps:size(RequestsByDc) of
                 0 ->
                     % we have all locks locally
@@ -308,7 +290,7 @@ orddict_get(Key, Dict, Default) ->
 
 
 
--spec try_acquire_locks(requester(), ordsets:ordset(antidote_locks:lock_spec_item()), #state{}) -> #state{}.
+-spec try_acquire_locks(requester(), ordsets:ordset(antidote_locks:lock_spec_item()), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
 try_acquire_locks(Requester, Locks, State) ->
     {RequesterPid, _} = Requester,
     case Locks of
@@ -354,7 +336,7 @@ group_by_first(List) ->
     maps:map(fun(_K,V) -> lists:reverse(V) end, M1).
 
 
--spec add_lock_waiting(requester(), antidote_locks:lock_spec(), #state{}) -> #state{}.
+-spec add_lock_waiting(requester(), antidote_locks:lock_spec(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
 add_lock_waiting(From, Locks, State) ->
     NewLocksWaiting = lists:foldl(fun(L) ->
         maps:update_with(L, fun(Q) -> queue:in(From, Q) end, queue:new(), State#state.lock_waiting)
@@ -364,7 +346,7 @@ add_lock_waiting(From, Locks, State) ->
         requester_waiting = maps:put(From, Locks, State#state.requester_waiting)
     }.
 
--spec add_lock_waiting_remote(requester(), #request_locks_remote{}, #state{}) -> #state{}.
+-spec add_lock_waiting_remote(requester(), #request_locks_remote{}, antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
 add_lock_waiting_remote(From, LocksReq, State) ->
     Locks = LocksReq#request_locks_remote.locks,
     NewLocksWaiting = lists:foldl(fun(L) ->
@@ -416,8 +398,8 @@ try_acquire_locks_remote(#request_locks_remote{locks = Locks, timestamp = TimeSt
     end.
 
 
--spec handle_release_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), #state{}) ->
-    {reply, ok, #state{}}.
+-spec handle_release_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), antidote_lock_server_state:state()) ->
+    {reply, ok, antidote_lock_server_state:state()}.
 handle_release_locks(_CommitTime, Locks, From, State) ->
     {Pid, _Tag} = From,
     {NewState, Errors} = lists:foldl(fun({Lock, Kind}, S) ->
@@ -456,11 +438,11 @@ handle_release_locks(_CommitTime, Locks, From, State) ->
     {reply, Res, NewState2}.
 
 
--spec check_locks_waiting([antidote_locks:lock()], #state{}) -> #state{}.
+-spec check_locks_waiting([antidote_locks:lock()], antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
 check_locks_waiting(Locks, State) ->
     lists:foldl(fun check_lock_waiting/2, State, Locks).
 
--spec check_locks_waiting(antidote_locks:lock(), #state{}) -> #state{}.
+-spec check_locks_waiting(antidote_locks:lock(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
 check_lock_waiting(Lock, State) ->
     % first check if there is a remote
 
