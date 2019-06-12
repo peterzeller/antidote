@@ -34,7 +34,7 @@
 
 -export_type([state/0]).
 
--export([initial/0, my_dc_id/1, add_process/5]).
+-export([initial/0, my_dc_id/1, add_process/5, try_acquire_locks/2, try_acquire_remote_locks/5, requests_for_missing_locks/3]).
 
 -opaque state() :: #state{}.
 
@@ -126,3 +126,95 @@ is_lock_held_exclusively(Lock, State) ->
         {ok, _} -> true;
         error -> false
     end.
+
+% calculates which inter-dc requests have to be sent out to others
+% for requesting all required locks
+-spec requests_for_missing_locks(list(dcid()), dcid(), antidote_locks:lock_spec()) -> #{dcid() => #request_locks_remote{}}.
+requests_for_missing_locks(AllDcIds, MyDcId, Locks) ->
+    InterDcRequests = lists:flatmap(requests_for_missing_locks(AllDcIds, MyDcId), Locks),
+    case InterDcRequests of
+        [] -> maps:new();
+        _ ->
+            Time = system_time(),
+            RequestsByDc = group_by_first(InterDcRequests),
+            maps:map(fun(_Dc, Locks) ->
+                #request_locks_remote{locks = Locks, my_dc_id = MyDcId, timestamp = Time}
+            end, RequestsByDc)
+    end.
+
+
+-spec requests_for_missing_locks(list(dcid()), dcid()) -> fun(({antidote_locks:lock_spec_item(), lock_crdt_value()}) -> [{dcid(), antidote_locks:lock_spec_item()}]).
+requests_for_missing_locks(AllDcIds, MyDcId) ->
+    fun({{Lock, Kind}=LockItem, LockValue}) ->
+        LockValueOwners = maps:get(owners, LockValue),
+        case Kind of
+            shared ->
+                %check that we own at least one entry in the map
+                case lists:member(MyDcId, maps:values(LockValueOwners)) of
+                    true ->
+                        % if we own one or more entries, we need no further requests
+                        [];
+                    false ->
+                        % otherwise, request to get lock back from current owner:
+                        CurrentOwner = maps:get(MyDcId, LockValueOwners),
+                        [{CurrentOwner, LockItem}]
+                end;
+            exclusive ->
+                % check that we own all datacenters
+                case lists:all(fun(Dc) -> maps:get(Dc, LockValueOwners, false) == MyDcId end, AllDcIds) of
+                    true ->
+                        % if we own all lock parts, we need no further requests
+                        [];
+                    false ->
+                        % otherwise, request all parts from the current owners:
+                        [{Owner, LockItem} || Owner <- lists:usort(maps:values(LockValueOwners))]
+                end
+        end
+    end.
+
+
+
+
+-spec group_by_first([{K,V}]) -> #{K => [V]}.
+group_by_first(List) ->
+    M1 = lists:foldl(fun({K,V}, M) ->
+        maps:update_with(K, fun(L) -> [V|L] end, [], M)
+    end, maps:new(), List),
+    maps:map(fun(_K,V) -> lists:reverse(V) end, M1).
+
+
+-spec add_lock_waiting(requester(), antidote_locks:lock_spec(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
+add_lock_waiting(From, Locks, State) ->
+    NewLocksWaiting = lists:foldl(fun(L) ->
+        maps:update_with(L, fun(Q) -> queue:in(From, Q) end, queue:new(), State#state.lock_waiting)
+    end, State#state.lock_waiting, Locks),
+    State#state{
+        lock_waiting = NewLocksWaiting,
+        requester_waiting = maps:put(From, Locks, State#state.requester_waiting)
+    }.
+
+-spec add_lock_waiting_remote(requester(), #request_locks_remote{}, antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
+add_lock_waiting_remote(From, LocksReq, State) ->
+    Locks = LocksReq#request_locks_remote.locks,
+    NewLocksWaiting = lists:foldl(fun(L) ->
+        maps:update_with(L, fun(Q) -> [{LocksReq, From}| Q] end, [], State#state.lock_waiting)
+    end, State#state.lock_waiting_remote, Locks),
+    State#state{
+        lock_waiting_remote = NewLocksWaiting,
+        requester_waiting = maps:put(From, Locks, State#state.requester_waiting)
+    }.
+
+
+% Tries to acquire the given locks for a remote dc.
+% Strategy used:
+%   When lock is in use: do not send
+%   Otherwise: send
+% Precondition:
+%   When a lock is not in use, no process is waiting for it.
+% Returns:
+%   HandOff: the locks to be sent to the remote dc
+%   RemoteRequests: the locks that have to be requested back because local processes are still waiting for them.
+-spec try_acquire_remote_locks(antidote_locks:lock_spec(), integer(), dcid(), pid(), state()) -> {HandOff, RemoteRequests, state()}
+    when HandOff :: antidote_locks:lock_spec(), %
+    RemoteRequests :: antidote_locks:lock_spec().
+try_acquire_remote_locks(Locks, Timestamp, DcId, RequesterPid, State) -> ok.
