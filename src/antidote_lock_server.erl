@@ -199,11 +199,11 @@ handle_request_locks(ClientClock, Locks, From, State) ->
                     % for shared locks, ask to get own lock back
                     % for exclusive locks, ask everyone to give their lock
 
-                    send_interdc_lock_requests(RequestsByDc, system_time()),
+                    send_interdc_lock_requests(RequestsByDc, system_time(), MyDcId),
 
                     NewState1 = antidote_lock_server_state:add_lock_waiting(From, Locks, State),
                     NewState2 = maps:fold(fun(_Dc, #request_locks_remote{locks = Ls}, S) ->
-                        antidote_lock_server_state:add_lock_waiting_remote(From, Ls, S)
+                        antidote_lock_server_state:set_lock_waiting_remote(From, Ls, S)
                     end, NewState1, RequestsByDc),
 
                     % will reply once all locks are acquired
@@ -211,9 +211,10 @@ handle_request_locks(ClientClock, Locks, From, State) ->
             end
     end.
 
--spec send_interdc_lock_requests(#{dcid() => #request_locks_remote{}}) -> ok.
-send_interdc_lock_requests(RequestsByDc) ->
-    maps:fold(fun(OtherDcID, ReqMsg, ok) ->
+-spec send_interdc_lock_requests(#{dcid() => antidote_locks:lock_spec()}, integer(), dcid()) -> ok.
+send_interdc_lock_requests(RequestsByDc, Time, MyDcID) ->
+    maps:fold(fun(OtherDcID, RequestedLocks, ok) ->
+        ReqMsg = #request_locks_remote{timestamp = Time, locks = RequestedLocks, my_dc_id = MyDcID},
         send_interdc_lock_request(OtherDcID, ReqMsg)
     end, ok, RequestsByDc).
 
@@ -277,14 +278,26 @@ try_acquire_locks(Requester, Locks, State) ->
 handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Timestamp, my_dc_id = RequesterDcId} = LockReq, From, State) ->
     {RequesterPid, _} = From,
     {HandOver, RequestAgain, NewState} = antidote_lock_server_state:try_acquire_remote_locks(Locks, Timestamp, RequesterDcId, RequesterPid, State),
+    MyDcId = antidote_lock_server_state:my_dc_id(State),
+
     % send to other data centers
+    handoff_locks_to_other_dcs_async(HandOver, RequesterDcId, MyDcId),
+
+    % send requests again for the locks we gave away
+    send_interdc_lock_requests(#{RequesterDcId => RequestAgain}, system_time(), MyDcId),
+
+
+
+    {noreply, NewState}.
+
+-spec handoff_locks_to_other_dcs_async(antidote_locks:lock_spec(), dcid(), dcid()) -> pid().
+handoff_locks_to_other_dcs_async(Locks, RequesterDcId, MyDcId) ->
     spawn_link(fun() ->
         {ok, TxId} = antidote:start_transaction(ignore, []),
-        LockObjects = get_lock_objects(HandOver),
+        LockObjects = get_lock_objects(Locks),
         {ok, LockValuesRaw} = antidote:read_objects(LockObjects, TxId),
         LockValues = [parse_lock_value(L) || L <- LockValuesRaw],
         Updates = lists:flatmap(fun({{Lock, Kind}, LockValue}) ->
-            MyDcId = antidote_lock_server_state:my_dc_id(State),
             case Kind of
                 shared ->
                     case maps:find(RequesterDcId, LockValue) of
@@ -294,15 +307,12 @@ handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Tim
                             []
                     end;
                 exclusive ->
-                    make_lock_updates(Lock, [{K, RequesterDcId} || {K,V} <- maps:to_list(LockValue), V == MyDcId])
+                    make_lock_updates(Lock, [{K, RequesterDcId} || {K, V} <- maps:to_list(LockValue), V == MyDcId])
             end
-        end, lists:zip(HandOver, LockValues)),
+        end, lists:zip(Locks, LockValues)),
         antidote:update_objects(Updates, TxId),
         antidote:commit_transaction(TxId)
-    end),
-
-
-    {noreply, NewState}.
+    end).
 
 
 try_acquire_locks_remote(#request_locks_remote{locks = Locks, timestamp = TimeStamp, my_dc_id = RemoteDc} = LockReq, Requester, State) ->

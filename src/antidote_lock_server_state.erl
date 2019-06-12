@@ -34,7 +34,7 @@
 
 -export_type([state/0]).
 
--export([initial/0, my_dc_id/1, add_process/5, try_acquire_locks/2, try_acquire_remote_locks/5, missing_locks_by_dc/3, missing_locks/4]).
+-export([initial/0, my_dc_id/1, add_process/5, try_acquire_locks/2, try_acquire_remote_locks/5, missing_locks_by_dc/3, missing_locks/4, set_lock_waiting_remote/3]).
 
 -opaque state() :: #state{}.
 
@@ -187,8 +187,8 @@ add_lock_waiting(From, Locks, State) ->
         requester_waiting = maps:put(From, Locks, State#state.requester_waiting)
     }.
 
--spec add_lock_waiting_remote(requester(), #request_locks_remote{}, antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
-add_lock_waiting_remote(From, LocksReq, State) ->
+-spec set_lock_waiting_remote(requester(), #request_locks_remote{}, antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
+set_lock_waiting_remote(From, LocksReq, State) ->
     Locks = LocksReq#request_locks_remote.locks,
     NewLocksWaiting = lists:foldl(fun(L) ->
         maps:update_with(L, fun(Q) -> [{LocksReq, From}| Q] end, [], State#state.lock_waiting)
@@ -210,5 +210,5 @@ add_lock_waiting_remote(From, LocksReq, State) ->
 %   RemoteRequests: the locks that have to be requested back because local processes are still waiting for them.
 -spec try_acquire_remote_locks(antidote_locks:lock_spec(), integer(), dcid(), pid(), state()) -> {HandOff, RemoteRequests, state()}
     when HandOff :: antidote_locks:lock_spec(), %
-    RemoteRequests :: antidote_locks:lock_spec().
+    RemoteRequests :: antidote_locks:lock_spec_item().
 try_acquire_remote_locks(Locks, Timestamp, DcId, RequesterPid, State) -> ok.
