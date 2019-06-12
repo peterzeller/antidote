@@ -54,6 +54,8 @@
 
 % there is one lock-part per datacenter.
 % the map stores lock-part to current owner
+-export_type([lock_crdt_value/0]).
+
 -type lock_crdt_value() :: #{dcid() => dcid()}.
 -type requester() :: {pid(), Tag :: term()}.
 
@@ -186,7 +188,7 @@ handle_request_locks(ClientClock, Locks, From, State) ->
             LockEntries = lists:zip(Locks, LockValues),
 
             MyDcId = antidote_lock_server_state:my_dc_id(State),
-            RequestsByDc = requests_for_missing_locks(AllDcIds, MyDcId, LockEntries),
+            RequestsByDc = antidote_lock_server_state:missing_locks_by_dc(AllDcIds, MyDcId, LockEntries),
             case maps:size(RequestsByDc) of
                 0 ->
                     % we have all locks locally
@@ -197,7 +199,7 @@ handle_request_locks(ClientClock, Locks, From, State) ->
                     % for shared locks, ask to get own lock back
                     % for exclusive locks, ask everyone to give their lock
 
-                    send_interdc_lock_requests(RequestsByDc),
+                    send_interdc_lock_requests(RequestsByDc, system_time()),
 
                     NewState1 = antidote_lock_server_state:add_lock_waiting(From, Locks, State),
                     NewState2 = maps:fold(fun(_Dc, #request_locks_remote{locks = Ls}, S) ->

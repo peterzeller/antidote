@@ -34,7 +34,7 @@
 
 -export_type([state/0]).
 
--export([initial/0, my_dc_id/1, add_process/5, try_acquire_locks/2, try_acquire_remote_locks/5, requests_for_missing_locks/3]).
+-export([initial/0, my_dc_id/1, add_process/5, try_acquire_locks/2, try_acquire_remote_locks/5, missing_locks_by_dc/3, missing_locks/4]).
 
 -opaque state() :: #state{}.
 
@@ -127,49 +127,43 @@ is_lock_held_exclusively(Lock, State) ->
         error -> false
     end.
 
-% calculates which inter-dc requests have to be sent out to others
-% for requesting all required locks
--spec requests_for_missing_locks(list(dcid()), dcid(), antidote_locks:lock_spec()) -> #{dcid() => #request_locks_remote{}}.
-requests_for_missing_locks(AllDcIds, MyDcId, Locks) ->
-    InterDcRequests = lists:flatmap(requests_for_missing_locks(AllDcIds, MyDcId), Locks),
-    case InterDcRequests of
+% calculates for which data centers there are still missing locks
+-spec missing_locks_by_dc(list(dcid()), dcid(), [{antidote_locks:lock_spec(), antidote_lock_server:lock_crdt_value()}]) -> #{dcid() => antidote_locks:lock_spec()}.
+missing_locks_by_dc(AllDcIds, MyDcId, Locks) ->
+    Missing = lists:flatmap(fun({{_Lock,Kind}=I,LockValue}) -> [{Dc, I} || Dc <- missing_locks(AllDcIds, MyDcId, Kind, LockValue)] end, Locks),
+    case Missing of
         [] -> maps:new();
         _ ->
-            Time = system_time(),
-            RequestsByDc = group_by_first(InterDcRequests),
-            maps:map(fun(_Dc, Locks) ->
-                #request_locks_remote{locks = Locks, my_dc_id = MyDcId, timestamp = Time}
-            end, RequestsByDc)
+            group_by_first(Missing)
     end.
 
-
--spec requests_for_missing_locks(list(dcid()), dcid()) -> fun(({antidote_locks:lock_spec_item(), lock_crdt_value()}) -> [{dcid(), antidote_locks:lock_spec_item()}]).
-requests_for_missing_locks(AllDcIds, MyDcId) ->
-    fun({{Lock, Kind}=LockItem, LockValue}) ->
-        LockValueOwners = maps:get(owners, LockValue),
-        case Kind of
-            shared ->
-                %check that we own at least one entry in the map
-                case lists:member(MyDcId, maps:values(LockValueOwners)) of
-                    true ->
-                        % if we own one or more entries, we need no further requests
-                        [];
-                    false ->
-                        % otherwise, request to get lock back from current owner:
-                        CurrentOwner = maps:get(MyDcId, LockValueOwners),
-                        [{CurrentOwner, LockItem}]
-                end;
-            exclusive ->
-                % check that we own all datacenters
-                case lists:all(fun(Dc) -> maps:get(Dc, LockValueOwners, false) == MyDcId end, AllDcIds) of
-                    true ->
-                        % if we own all lock parts, we need no further requests
-                        [];
-                    false ->
-                        % otherwise, request all parts from the current owners:
-                        [{Owner, LockItem} || Owner <- lists:usort(maps:values(LockValueOwners))]
-                end
-        end
+% computes which locks are still missing
+% returns a list of current owners for this lock
+-spec missing_locks(list(dcid()), dcid(), antidote_locks:lock_kind(), antidote_lock_server:lock_crdt_value()) -> [dcid()].
+missing_locks(AllDcIds, MyDcId, Kind, LockValue) ->
+    LockValueOwners = maps:get(owners, LockValue),
+    case Kind of
+        shared ->
+            %check that we own at least one entry in the map
+            case lists:member(MyDcId, maps:values(LockValueOwners)) of
+                true ->
+                    % if we own one or more entries, we need no further requests
+                    [];
+                false ->
+                    % otherwise, request to get lock back from current owner:
+                    CurrentOwner = maps:get(MyDcId, LockValueOwners),
+                    [CurrentOwner]
+            end;
+        exclusive ->
+            % check that we own all datacenters
+            case lists:all(fun(Dc) -> maps:get(Dc, LockValueOwners, false) == MyDcId end, AllDcIds) of
+                true ->
+                    % if we own all lock parts, we need no further requests
+                    [];
+                false ->
+                    % otherwise, request all parts from the current owners:
+                    lists:usort(maps:values(LockValueOwners)) -- [MyDcId]
+            end
     end.
 
 
