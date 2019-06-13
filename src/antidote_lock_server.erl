@@ -115,7 +115,7 @@ request(Req, NumTries) ->
             }),
             request(Req, NumTries - 1);
         Reason ->
-            lager:error("Could not handle antidote_lock_server request ~p:~n~p", [Req, Reason]),
+            logger:error("Could not handle antidote_lock_server request ~p:~n~p", [Req, Reason]),
             {error, Reason}
     end.
 
@@ -145,6 +145,10 @@ handle_call(#request_locks_remote{}=Req, From, State) ->
 handle_cast(_Request, State) ->
     {noreply, State}.
 
+handle_info({'EXIT', FromPid, Reason}, State) ->
+    {Actions, NewState} = antidote_lock_server_state:remove_locks(FromPid, State),
+    % todo execute actions
+    {noreply, NewState};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -315,97 +319,71 @@ handoff_locks_to_other_dcs_async(Locks, RequesterDcId, MyDcId) ->
     end).
 
 
-try_acquire_locks_remote(#request_locks_remote{locks = Locks, timestamp = TimeStamp, my_dc_id = RemoteDc} = LockReq, Requester, State) ->
-    {RequesterPid, _} = Requester,
-    case Locks of
-        [] ->
-            % all locks acquired
-            gen_server:reply(Requester, ok),
-            State;
-        [{Lock, Kind}|LocksRest] ->
-            case Kind of
-                shared ->
-                    case maps:find(Lock, State#state.locks_held_exclusively) of
-                        {ok, _} ->
-                            % lock currently used exclusively -> wait
-                            add_lock_waiting_remote(Requester, Locks, State);
-                        error ->
-                            % not used exclusively -> acquire this lock
-                            State2 = State#state{
-                                locks_held_shared = maps:update_with(Lock, fun(L) -> [RequesterPid|L] end, [], State#state.locks_held_shared)
-                            },
-                            try_acquire_locks(Requester, LocksRest, State2)
-                    end;
-                exclusive ->
-                    case {maps:find(Lock, State#state.locks_held_exclusively), maps:find(Lock, State#state.locks_held_shared)} of
-                        {error, error} ->
-                            % lock neither used exclusively nor shared -> acquire this lock
-                            State2 = State#state{
-                                locks_held_exclusively = maps:put(Lock, RequesterPid, State#state.locks_held_exclusively)
-                            },
-                            try_acquire_locks(Requester, LocksRest, State2);
-                        _ ->
-                            % lock currently used -> wait
-                            add_lock_waiting(Requester, Locks, State)
-                    end
-            end
-    end.
-
-
 -spec handle_release_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), antidote_lock_server_state:state()) ->
     {reply, ok, antidote_lock_server_state:state()}.
 handle_release_locks(_CommitTime, Locks, From, State) ->
-    {Pid, _Tag} = From,
-    {NewState, Errors} = lists:foldl(fun({Lock, Kind}, S) ->
-        case Kind of
-            exclusive ->
-                case maps:find(Lock, State#state.locks_held_exclusively) of
-                    {ok, Pid} ->
-                        {S#state{locks_held_exclusively = maps:remove(Lock, State#state.locks_held_exclusively)}, Errors};
-                    Other ->
-                        {S, [{'exclusive lock missing', Lock, Pid, Other}|Errors]}
-                end;
-            shared ->
-                case maps:find(Lock, State#state.locks_held_shared) of
-                    {ok, Pids} ->
-                        case lists:member(Pid, Pids) of
-                            true ->
-                                NewPids = lists:delete(Pid, Pids),
-                                {S#state{locks_held_shared = maps:put(Lock, NewPids, S#state.locks_held_shared)}, Errors};
-                            false ->
-                                {S, [{'shared lock missing', Lock, Pid, Pids}|Errors]}
-                        end;
-                    error ->
-                        {S, [{'shared lock missing', Lock, Pid}|Errors]}
-                end
-        end
-    end, {State, []}, Locks),
+    {FromPid, _Tag} = From,
 
-    % check if someone else can get the lock now
-    NewState2 = check_locks_waiting([Lock || {Lock, _Kind} <- Locks], NewState),
-
-    Res = case Errors of
-        [] -> ok;
-        _ -> {error, {lock_error, Errors}}
-    end,
-
-    {reply, Res, NewState2}.
-
-
--spec check_locks_waiting([antidote_locks:lock()], antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
-check_locks_waiting(Locks, State) ->
-    lists:foldl(fun check_lock_waiting/2, State, Locks).
-
--spec check_locks_waiting(antidote_locks:lock(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
-check_lock_waiting(Lock, State) ->
-    % first check if there is a remote
-
-    % then local
-    LockWaitingQ = maps:get(Lock, State#state.lock_waiting, queue:new()),
-    case queue:out(LockWaitingQ) of
-        {empty, _} -> State;
-        {{value, Requester}, LockWaitingQ2} ->
-            todo
+    CheckResult = antidote_lock_server_state:check_release_locks(FromPid, Locks, State),
+    {Actions, NewState} = antidote_lock_server_state:remove_locks(FromPid, State),
+    % todo execute actions
+    case CheckResult of
+        {error, Reason} ->
+            {reply, {lock_error, Reason}, NewState};
+        ok ->
+            {reply, ok, NewState}
     end.
+
+%%    {NewState, Errors} = lists:foldl(fun({Lock, Kind}, S) ->
+%%        case Kind of
+%%            exclusive ->
+%%                case maps:find(Lock, State#state.locks_held_exclusively) of
+%%                    {ok, Pid} ->
+%%                        {S#state{locks_held_exclusively = maps:remove(Lock, State#state.locks_held_exclusively)}, Errors};
+%%                    Other ->
+%%                        {S, [{'exclusive lock missing', Lock, Pid, Other}|Errors]}
+%%                end;
+%%            shared ->
+%%                case maps:find(Lock, State#state.locks_held_shared) of
+%%                    {ok, Pids} ->
+%%                        case lists:member(Pid, Pids) of
+%%                            true ->
+%%                                NewPids = lists:delete(Pid, Pids),
+%%                                {S#state{locks_held_shared = maps:put(Lock, NewPids, S#state.locks_held_shared)}, Errors};
+%%                            false ->
+%%                                {S, [{'shared lock missing', Lock, Pid, Pids}|Errors]}
+%%                        end;
+%%                    error ->
+%%                        {S, [{'shared lock missing', Lock, Pid}|Errors]}
+%%                end
+%%        end
+%%    end, {State, []}, Locks),
+%%
+%%    % check if someone else can get the lock now
+%%    NewState2 = check_locks_waiting([Lock || {Lock, _Kind} <- Locks], NewState),
+%%
+%%    Res = case Errors of
+%%        [] -> ok;
+%%        _ -> {error, {lock_error, Errors}}
+%%    end,
+%%
+%%    {reply, Res, NewState2}.
+%%
+%%
+%%-spec check_locks_waiting([antidote_locks:lock()], antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
+%%check_locks_waiting(Locks, State) ->
+%%    lists:foldl(fun check_lock_waiting/2, State, Locks).
+%%
+%%-spec check_locks_waiting(antidote_locks:lock(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
+%%check_lock_waiting(Lock, State) ->
+%%    % first check if there is a remote
+%%
+%%    % then local
+%%    LockWaitingQ = maps:get(Lock, State#state.lock_waiting, queue:new()),
+%%    case queue:out(LockWaitingQ) of
+%%        {empty, _} -> State;
+%%        {{value, Requester}, LockWaitingQ2} ->
+%%            todo
+%%    end.
 
 
