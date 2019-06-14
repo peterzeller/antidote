@@ -34,10 +34,15 @@
 
 -export_type([state/0]).
 
--export([initial/0, my_dc_id/1, add_process/5, try_acquire_locks/2, try_acquire_remote_locks/5, missing_locks_by_dc/3, missing_locks/4, set_lock_waiting_remote/3]).
+-export([initial/0, my_dc_id/1, add_process/5, try_acquire_locks/2, try_acquire_remote_locks/5, missing_locks_by_dc/3, missing_locks/4, set_lock_waiting_remote/3, check_release_locks/3, remove_locks/2, add_lock_waiting/4]).
 
 -opaque state() :: #state{}.
 
+% state invariants:
+% - if a process has an exclusive lock, no other process has a lock (held state)
+% - if a process is in held or waiting state, the corresponding lock is locally available
+% - NOT if a lock is not held by anyone, then no one is waiting for it (if someone where, he should have taken it)
+% - if a process holds a lock, it is not waiting for any locks that are smaller (=> avoiding deadlocks)
 -record(state, {
     %% own datacenter id
     dc_id :: dcid(),
@@ -54,8 +59,7 @@
 -type requester() :: {pid(), Tag :: term()}.
 
 -type lock_state() ::
-    {waiting, antidote_locks:lock_kind()}
-  | {held, antidote_locks:lock_kind()}.
+    {waiting | held | waiting_remote, antidote_locks:lock_kind()}.
 
 
 initial() -> #state{}.
@@ -81,51 +85,65 @@ add_process(Requester, RequestTime, IsRemote, Locks, State) ->
 
 %% Tries to acquire the locks for the given Pid
 %% Res is true iff all locks were acquired.
+%% Precondition: all remote locks are already available locally
 -spec try_acquire_locks(pid(), state()) -> {boolean(), state()}.
 try_acquire_locks(Pid, State) ->
+    {ok, PidState} = maps:find(Pid, State#state.by_pid),
+    LockStates = PidState#pid_state.locks,
+    try_acquire_lock_list(Pid, LockStates, State).
 
-    {RequesterPid, _} = Requester,
-    case Locks of
-        [] ->
-            % all locks acquired
-            {true, State};
-        [{Lock, Kind} | LocksRest] ->
-            case Kind of
-                shared ->
-                    case is_lock_held_exclusively(Lock, State) of
+-spec try_acquire_lock_list(pid(), ordsets:ordset(antidote_locks:lock(), lock_state()), state()) -> {boolean(), state()}.
+try_acquire_lock_list(Pid, LockStates, State) ->
+    case LockStates of
+        [] -> {true, State};
+        [{Lock, {LockState, Kind}}| LockStatesRest] ->
+            case LockState of
+                held ->
+                    try_acquire_lock_list(Pid, LockStatesRest, State);
+                waiting ->
+                    LS = lock_held_state(Lock, State),
+                    case LS == none orelse Kind == shared andalso LS == shared  of
                         true ->
-                            % lock currently used exclusively -> wait
-                            add_lock_waiting(Requester, Locks, State);
-                        error ->
-                            % not used exclusively -> acquire this lock
-                            State2 = State#state{
-                                locks_held_shared = maps:update_with(Lock, fun(L) ->
-                                    [RequesterPid | L] end, [], State#state.locks_held_shared)
-                            },
-                            try_acquire_locks(Requester, LocksRest, State2)
+                            {false, State};
+                        false ->
+                            % acquire lock
+                            NewState = update_lock_state(State, Pid, Lock, {held, Kind}),
+                            try_acquire_lock_list(Pid, LockStatesRest, NewState)
                     end;
-                exclusive ->
-                    case {maps:find(Lock, State#state.locks_held_exclusively), maps:find(Lock, State#state.locks_held_shared)} of
-                        {error, error} ->
-                            % lock neither used exclusively nor shared -> acquire this lock
-                            State2 = State#state{
-                                locks_held_exclusively = maps:put(Lock, RequesterPid, State#state.locks_held_exclusively)
-                            },
-                            try_acquire_locks(Requester, LocksRest, State2);
-                        _ ->
-                            % lock currently used -> wait
-                            add_lock_waiting(Requester, Locks, State)
-                    end
+                waiting_remote ->
+                    throw({'precondition violated: all locks must be available locally', Lock})
+            end
+    end.
+
+update_lock_state(State, Pid, Lock, LockState) ->
+    State#state{
+        by_pid = maps:update_with(Pid, fun(S) ->
+            S#pid_state{
+                locks = orddict:update(Lock, LockState, S#pid_state.locks)
+            }
+        end, State#state.by_pid)
+    }.
+
+
+
+-spec lock_held_state(antidote_locks:lock(), state()) -> shared | exclusive | none.
+lock_held_state(Lock, State) ->
+    lock_held_state_iter(Lock, maps:iterator(State#state.by_pid)).
+
+lock_held_state_iter(Lock, Iter) ->
+    case maps:next(Iter) of
+        none -> none;
+        {_Pid, PidState, NextIterator} ->
+            case orddict:find(Lock, PidState#pid_state.locks) of
+                {ok, {held, LockKind}} ->
+                    % we can return the first entry we find, since the two kinds exclude each other
+                    LockKind;
+                _ ->
+                    lock_held_state_iter(Lock, NextIterator)
             end
     end.
 
 
--spec is_lock_held_exclusively(antidote_locks:lock(), state()) -> boolean().
-is_lock_held_exclusively(Lock, State) ->
-    case maps:find(Lock, State#state.locks_held_exclusively) of
-        {ok, _} -> true;
-        error -> false
-    end.
 
 % calculates for which data centers there are still missing locks
 -spec missing_locks_by_dc(list(dcid()), dcid(), [{antidote_locks:lock_spec(), antidote_lock_server:lock_crdt_value()}]) -> #{dcid() => antidote_locks:lock_spec()}.
@@ -177,26 +195,46 @@ group_by_first(List) ->
     maps:map(fun(_K,V) -> lists:reverse(V) end, M1).
 
 
--spec add_lock_waiting(requester(), antidote_locks:lock_spec(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
-add_lock_waiting(From, Locks, State) ->
-    NewLocksWaiting = lists:foldl(fun(L) ->
-        maps:update_with(L, fun(Q) -> queue:in(From, Q) end, queue:new(), State#state.lock_waiting)
-    end, State#state.lock_waiting, Locks),
+%% Adds a new process to the state.
+%% The process is initially in the waiting state.
+-spec add_lock_waiting(pid(), integer(), antidote_locks:lock_spec(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
+add_lock_waiting(Requester, RequestTime, Locks, State) ->
+    {RequesterPid, _} = Requester,
+    PidState = #pid_state{
+        locks = [{Lock, {waiting, Kind}} || {Lock, Kind} <- Locks],
+        request_time = RequestTime,
+        is_remote = false,
+        requester = Requester
+    },
     State#state{
-        lock_waiting = NewLocksWaiting,
-        requester_waiting = maps:put(From, Locks, State#state.requester_waiting)
+        by_pid = maps:put(RequesterPid, PidState, State)
     }.
 
--spec set_lock_waiting_remote(requester(), #request_locks_remote{}, antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
-set_lock_waiting_remote(From, LocksReq, State) ->
-    Locks = LocksReq#request_locks_remote.locks,
-    NewLocksWaiting = lists:foldl(fun(L) ->
-        maps:update_with(L, fun(Q) -> [{LocksReq, From}| Q] end, [], State#state.lock_waiting)
-    end, State#state.lock_waiting_remote, Locks),
+% sets the given locks to the waiting_remote state
+-spec set_lock_waiting_remote(pid(), ordsets:ordset(antidote_locks:lock()), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
+set_lock_waiting_remote(Pid, Locks, State) ->
     State#state{
-        lock_waiting_remote = NewLocksWaiting,
-        requester_waiting = maps:put(From, Locks, State#state.requester_waiting)
+        by_pid = maps:update_with(Pid, fun(S) ->
+                S#pid_state{
+                    locks = set_lock_waiting_remote_list(Locks, S#pid_state.locks)
+                }
+            end, State#state.by_pid)
     }.
+
+set_lock_waiting_remote_list(LocksToChange, Locks) ->
+    [{L, case ordsets:is_element(L, LocksToChange) of
+        true -> {L, {waiting_remote, K}};
+        false -> {L, {S, K}}
+    end} || {L,{S,K}} <- Locks].
+% optimized version:
+%%set_lock_waiting_remote_list([], Locks) -> Locks;
+%%set_lock_waiting_remote_list(_, []) -> [];
+%%set_lock_waiting_remote_list([X|Xs], [{L,S}|R]) when X < L ->
+%%    [{L,S}| set_lock_waiting_remote_list([X|Xs], R)];
+%%set_lock_waiting_remote_list([X|Xs], [{L,{_,K}}|R]) when X == L ->
+%%    [{L,{waiting_remote,K}}| set_lock_waiting_remote_list(Xs, R)];
+%%set_lock_waiting_remote_list([X|Xs], Locks) ->
+%%    set_lock_waiting_remote_list(Xs, Locks).
 
 
 % Tries to acquire the given locks for a remote dc.
@@ -211,4 +249,21 @@ set_lock_waiting_remote(From, LocksReq, State) ->
 -spec try_acquire_remote_locks(antidote_locks:lock_spec(), integer(), dcid(), pid(), state()) -> {HandOff, RemoteRequests, state()}
     when HandOff :: antidote_locks:lock_spec(), %
     RemoteRequests :: antidote_locks:lock_spec_item().
-try_acquire_remote_locks(Locks, Timestamp, DcId, RequesterPid, State) -> ok.
+try_acquire_remote_locks(Locks, Timestamp, DcId, RequesterPid, State) ->
+    todo.
+
+
+
+-spec check_release_locks(pid(), antidote_locks:lock_spec(), state()) -> ok | {error, Reason :: any()}.
+check_release_locks(FromPid, Locks, State) ->
+    todo.
+
+% removes the locks for the given pid
+-spec remove_locks(pid(), state()) -> {HandOverActions, LockRequestActions, Replies, state()}
+    when HandOverActions :: [{antidote_locks:lock_spec(), dcid()}],
+    LockRequestActions :: #{dcid() => antidote_locks:lock_spec()},
+    Replies :: [requester()].
+remove_locks(FromPid, State) ->
+    todo.
+
+

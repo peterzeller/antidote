@@ -203,9 +203,10 @@ handle_request_locks(ClientClock, Locks, From, State) ->
                     % for shared locks, ask to get own lock back
                     % for exclusive locks, ask everyone to give their lock
 
-                    send_interdc_lock_requests(RequestsByDc, system_time(), MyDcId),
+                    SystemTime = system_time(),
+                    send_interdc_lock_requests(RequestsByDc, SystemTime, MyDcId),
 
-                    NewState1 = antidote_lock_server_state:add_lock_waiting(From, Locks, State),
+                    NewState1 = antidote_lock_server_state:add_lock_waiting(FromPid, SystemTime, Locks, State),
                     NewState2 = maps:fold(fun(_Dc, #request_locks_remote{locks = Ls}, S) ->
                         antidote_lock_server_state:set_lock_waiting_remote(From, Ls, S)
                     end, NewState1, RequestsByDc),
@@ -325,8 +326,21 @@ handle_release_locks(_CommitTime, Locks, From, State) ->
     {FromPid, _Tag} = From,
 
     CheckResult = antidote_lock_server_state:check_release_locks(FromPid, Locks, State),
-    {Actions, NewState} = antidote_lock_server_state:remove_locks(FromPid, State),
-    % todo execute actions
+    {HandOverActions, LockRequestActions, Replies, NewState} = antidote_lock_server_state:remove_locks(FromPid, State),
+
+    MyDcId = antidote_lock_server_state:my_dc_id(State),
+
+    % send to other data centers
+    lists:foreach(fun({HandOver, RequesterDcId}) ->
+        handoff_locks_to_other_dcs_async(HandOver, RequesterDcId, MyDcId)
+    end, HandOverActions),
+
+    % send requests again
+    send_interdc_lock_requests(LockRequestActions, system_time(), MyDcId),
+
+    % reply to acquired locks
+    lists:foreach(fun(R) -> gen_server:reply(R, ok) end, Replies),
+
     case CheckResult of
         {error, Reason} ->
             {reply, {lock_error, Reason}, NewState};
