@@ -39,7 +39,7 @@
 
 
 %% API
--export([start_link/0, request_locks/2, request_locks_remote/1, release_locks/2]).
+-export([start_link/0, request_locks/2, request_locks_remote/1, release_locks/2, on_interdc_reply/2]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -93,7 +93,7 @@ start_link() ->
 request_locks(ClientClock, Locks) ->
     request(#request_locks{client_clock = ClientClock, locks = Locks}, 3).
 
--spec release_locks(snapshot_time(), lock_spec()) -> ok | {error, any()}.
+-spec release_locks(snapshot_time(), antidote_locks:lock_spec()) -> ok | {error, any()}.
 release_locks(CommitTime, Locks) ->
     request(#release_locks{commit_time = CommitTime, locks = Locks}, 0).
 
@@ -120,7 +120,7 @@ request(Req, NumTries) ->
     end.
 
 % called in inter_dc_query_response
--spec request_locks_remote(lock_request()) -> ok | {error, Reason}.
+-spec request_locks_remote(#request_locks_remote{}) -> ok | {error, Reason :: any()}.
 request_locks_remote(Req) ->
     request(Req, 3).
 
@@ -137,17 +137,18 @@ init([]) ->
 
 handle_call(#request_locks{client_clock = ClientClock, locks = Locks}, From, State) ->
     handle_request_locks(ClientClock, Locks, From, State);
-handle_call(#release_locks{commit_time = CommitTime, locks = Locks}, From, State) ->
-    handle_release_locks(CommitTime, Locks, From, State);
+handle_call(#release_locks{}, From, State) ->
+    {FromPid, _Tag} = From,
+    handle_release_locks(FromPid, State);
 handle_call(#request_locks_remote{}=Req, From, State) ->
     handle_request_locks_remote(Req, From, State).
 
 handle_cast(_Request, State) ->
     {noreply, State}.
 
-handle_info({'EXIT', FromPid, Reason}, State) ->
-    {Actions, NewState} = antidote_lock_server_state:remove_locks(FromPid, State),
-    % todo execute actions
+handle_info({'EXIT', FromPid, _Reason}, State) ->
+    % when a process crashes, it's locks are released
+    {reply, _, NewState} = handle_release_locks(FromPid, State),
     {noreply, NewState};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -203,7 +204,7 @@ handle_request_locks(ClientClock, Locks, From, State) ->
                     % for shared locks, ask to get own lock back
                     % for exclusive locks, ask everyone to give their lock
 
-                    SystemTime = system_time(),
+                    SystemTime = erlang:system_time(),
                     send_interdc_lock_requests(RequestsByDc, SystemTime, MyDcId),
 
                     NewState1 = antidote_lock_server_state:add_lock_waiting(FromPid, SystemTime, Locks, State),
@@ -227,9 +228,9 @@ send_interdc_lock_requests(RequestsByDc, Time, MyDcID) ->
 send_interdc_lock_request(OtherDcID, ReqMsg) ->
     {LocalPartition, _} = log_utilities:get_key_partition(locks),
     PDCID = {OtherDcID, LocalPartition},
-    ok = inter_dc_query:perform_request(?LOCK_SERVER_REQUEST, PDCID, term_to_binary(ReqMsg), fun antidote_lock_server:on_interc_reply/2).
+    ok = inter_dc_query:perform_request(?LOCK_SERVER_REQUEST, PDCID, term_to_binary(ReqMsg), fun antidote_lock_server:on_interdc_reply/2).
 
-on_interc_reply(_BinaryResp, _RequestCacheEntry) ->
+on_interdc_reply(_BinaryResp, _RequestCacheEntry) ->
     ok.
 
 
@@ -252,7 +253,7 @@ parse_lock_value(RawV) ->
     maps:from_list([{binary_to_term(K), binary_to_term(V)} || {{K, _}, V} <- RawV]).
 
 -spec make_lock_updates(antidote_locks:lock(), [{dcid(), dcid()}]) -> [{bound_object(), {op_name(), op_param()}}].
-make_lock_updates(Lock, []) -> [];
+make_lock_updates(_Lock, []) -> [];
 make_lock_updates(Lock, Updates) ->
     [{get_lock_object(Lock), {update,
         [{{K, antidote_crdt_register_mv}, {assign, V}} || {K,V} <- Updates]}}].
@@ -266,7 +267,7 @@ make_lock_updates(Lock, Updates) ->
 
 
 -spec try_acquire_locks(requester(), antidote_locks:lock_spec(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
-try_acquire_locks(Requester, Locks, State) ->
+try_acquire_locks(Requester, _Locks, State) ->
     {RequesterPid, _} = Requester,
     {AllAcquired, NewState} = antidote_lock_server_state:try_acquire_locks(RequesterPid, State),
     case AllAcquired of
@@ -280,20 +281,28 @@ try_acquire_locks(Requester, Locks, State) ->
 
 
 
-handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Timestamp, my_dc_id = RequesterDcId} = LockReq, From, State) ->
-    {RequesterPid, _} = From,
-    {HandOver, RequestAgain, NewState} = antidote_lock_server_state:try_acquire_remote_locks(Locks, Timestamp, RequesterDcId, RequesterPid, State),
+handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Timestamp, my_dc_id = RequesterDcId}, From, State) ->
+    NewState = antidote_lock_server_state:add_process(From, Timestamp, true, Locks, State),
+
+    {AllLocksAcquired, NewState2} = antidote_lock_server_state:try_acquire_locks(RequesterDcId, NewState),
+
     MyDcId = antidote_lock_server_state:my_dc_id(State),
 
-    % send to other data centers
-    handoff_locks_to_other_dcs_async(HandOver, RequesterDcId, MyDcId),
-
-    % send requests again for the locks we gave away
-    send_interdc_lock_requests(#{RequesterDcId => RequestAgain}, system_time(), MyDcId),
-
+    case AllLocksAcquired of
+        true ->
+            % send locks to other data centers
+            handoff_locks_to_other_dcs_async(Locks, RequesterDcId, MyDcId),
 
 
-    {noreply, NewState}.
+            % send requests again for the locks we gave away and still need:
+            RequestAgain = antidote_lock_server_state:filter_waited_for_locks([L || {L, _} <- Locks], NewState2),
+            send_interdc_lock_requests(#{RequesterDcId => RequestAgain}, erlang:system_time(), MyDcId),
+
+            complete_request(From, ok, NewState2),
+            {noreply, NewState2};
+        false ->
+            {noreply, NewState2}
+    end.
 
 -spec handoff_locks_to_other_dcs_async(antidote_locks:lock_spec(), dcid(), dcid()) -> pid().
 handoff_locks_to_other_dcs_async(Locks, RequesterDcId, MyDcId) ->
@@ -320,12 +329,11 @@ handoff_locks_to_other_dcs_async(Locks, RequesterDcId, MyDcId) ->
     end).
 
 
--spec handle_release_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), antidote_lock_server_state:state()) ->
+-spec handle_release_locks(requester(), antidote_lock_server_state:state()) ->
     {reply, ok, antidote_lock_server_state:state()}.
-handle_release_locks(_CommitTime, Locks, From, State) ->
-    {FromPid, _Tag} = From,
+handle_release_locks(FromPid, State) ->
 
-    CheckResult = antidote_lock_server_state:check_release_locks(FromPid, Locks, State),
+    CheckResult = antidote_lock_server_state:check_release_locks(FromPid, State),
     {HandOverActions, LockRequestActions, Replies, NewState} = antidote_lock_server_state:remove_locks(FromPid, State),
 
     MyDcId = antidote_lock_server_state:my_dc_id(State),
@@ -336,7 +344,7 @@ handle_release_locks(_CommitTime, Locks, From, State) ->
     end, HandOverActions),
 
     % send requests again
-    send_interdc_lock_requests(LockRequestActions, system_time(), MyDcId),
+    send_interdc_lock_requests(LockRequestActions, erlang:system_time(), MyDcId),
 
     % reply to acquired locks
     lists:foreach(fun(R) -> gen_server:reply(R, ok) end, Replies),
@@ -348,56 +356,8 @@ handle_release_locks(_CommitTime, Locks, From, State) ->
             {reply, ok, NewState}
     end.
 
-%%    {NewState, Errors} = lists:foldl(fun({Lock, Kind}, S) ->
-%%        case Kind of
-%%            exclusive ->
-%%                case maps:find(Lock, State#state.locks_held_exclusively) of
-%%                    {ok, Pid} ->
-%%                        {S#state{locks_held_exclusively = maps:remove(Lock, State#state.locks_held_exclusively)}, Errors};
-%%                    Other ->
-%%                        {S, [{'exclusive lock missing', Lock, Pid, Other}|Errors]}
-%%                end;
-%%            shared ->
-%%                case maps:find(Lock, State#state.locks_held_shared) of
-%%                    {ok, Pids} ->
-%%                        case lists:member(Pid, Pids) of
-%%                            true ->
-%%                                NewPids = lists:delete(Pid, Pids),
-%%                                {S#state{locks_held_shared = maps:put(Lock, NewPids, S#state.locks_held_shared)}, Errors};
-%%                            false ->
-%%                                {S, [{'shared lock missing', Lock, Pid, Pids}|Errors]}
-%%                        end;
-%%                    error ->
-%%                        {S, [{'shared lock missing', Lock, Pid}|Errors]}
-%%                end
-%%        end
-%%    end, {State, []}, Locks),
-%%
-%%    % check if someone else can get the lock now
-%%    NewState2 = check_locks_waiting([Lock || {Lock, _Kind} <- Locks], NewState),
-%%
-%%    Res = case Errors of
-%%        [] -> ok;
-%%        _ -> {error, {lock_error, Errors}}
-%%    end,
-%%
-%%    {reply, Res, NewState2}.
-%%
-%%
-%%-spec check_locks_waiting([antidote_locks:lock()], antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
-%%check_locks_waiting(Locks, State) ->
-%%    lists:foldl(fun check_lock_waiting/2, State, Locks).
-%%
-%%-spec check_locks_waiting(antidote_locks:lock(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
-%%check_lock_waiting(Lock, State) ->
-%%    % first check if there is a remote
-%%
-%%    % then local
-%%    LockWaitingQ = maps:get(Lock, State#state.lock_waiting, queue:new()),
-%%    case queue:out(LockWaitingQ) of
-%%        {empty, _} -> State;
-%%        {{value, Requester}, LockWaitingQ2} ->
-%%            todo
-%%    end.
 
-
+complete_request(From, Reply, State) ->
+    {Pid, _} = From,
+    gen_server:reply(From, Reply),
+    antidote_lock_server_state:remove_locks(Pid, State).
