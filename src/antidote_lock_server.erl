@@ -76,6 +76,10 @@
     locks :: antidote_locks:lock_spec()
 }).
 
+-record(on_receive_remote_locks, {
+    locks :: antidote_locks:lock_spec(),
+    snapshot_time :: snapshot_time()
+}).
 
 %%%===================================================================
 %%% API
@@ -96,6 +100,10 @@ request_locks(ClientClock, Locks) ->
 -spec release_locks(snapshot_time(), antidote_locks:lock_spec()) -> ok | {error, any()}.
 release_locks(CommitTime, Locks) ->
     request(#release_locks{commit_time = CommitTime, locks = Locks}, 0).
+
+-spec on_receive_remote_locks(antidote_locks:lock_spec(), snapshot_time()) -> ok | {error, any()}.
+on_receive_remote_locks(Locks, SnapshotTime) ->
+    request(#on_receive_remote_locks{snapshot_time = SnapshotTime, locks = Locks}, 0).
 
 
 % sends a request to the global gen-server instance, starting it if necessary
@@ -142,7 +150,9 @@ handle_call(#release_locks{}, From, State) ->
     {FromPid, _Tag} = From,
     handle_release_locks(FromPid, State);
 handle_call(#request_locks_remote{}=Req, From, State) ->
-    handle_request_locks_remote(Req, From, State).
+    handle_request_locks_remote(Req, From, State);
+handle_call(#on_receive_remote_locks{snapshot_time = SnapshotTime, locks = Locks}, _From, State) ->
+    handle_on_receive_remote_locks(Locks, SnapshotTime, State).
 
 handle_cast(_Request, State) ->
     {noreply, State}.
@@ -170,9 +180,8 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 -spec handle_request_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), antidote_lock_server_state:state()) -> Result
-    when Result :: {reply, {could_not_obtain_logs, any()}, antidote_lock_server_state:state()}
-| {reply, ok, antidote_lock_server_state:state()}
-| {noreply, antidote_lock_server_state:state()}.
+    when Result :: {reply, Resp, antidote_lock_server_state:state()} | {noreply, antidote_lock_server_state:state()},
+    Resp :: {could_not_obtain_logs, any()}.
 handle_request_locks(ClientClock, Locks, From, State) ->
     LockObjects = get_lock_objects(Locks),
     case antidote:read_objects(ClientClock, [], LockObjects) of
@@ -210,7 +219,7 @@ handle_request_locks(ClientClock, Locks, From, State) ->
 
                     NewState1 = antidote_lock_server_state:add_lock_waiting(From, SystemTime, Locks, State),
                     NewState2 = maps:fold(fun(_Dc, #request_locks_remote{locks = Ls}, S) ->
-                        antidote_lock_server_state:set_lock_waiting_remote(FromPid, Ls, S)
+                        antidote_lock_server_state:set_lock_waiting_state(FromPid, Ls, S, waiting, waiting_remote)
                     end, NewState1, RequestsByDc),
 
                     % will reply once all locks are acquired
@@ -231,7 +240,9 @@ send_interdc_lock_request(OtherDcID, ReqMsg) ->
     PDCID = {OtherDcID, LocalPartition},
     ok = inter_dc_query:perform_request(?LOCK_SERVER_REQUEST, PDCID, term_to_binary(ReqMsg), fun antidote_lock_server:on_interdc_reply/2).
 
-on_interdc_reply(_BinaryResp, _RequestCacheEntry) ->
+on_interdc_reply(BinaryResp, _RequestCacheEntry) ->
+    {ok, Locks, SnapshotTime} = binary_to_term(BinaryResp),
+    on_receive_remote_locks(Locks, SnapshotTime),
     ok.
 
 
@@ -273,7 +284,8 @@ try_acquire_locks(Requester, _Locks, State) ->
     {AllAcquired, NewState} = antidote_lock_server_state:try_acquire_locks(RequesterPid, State),
     case AllAcquired of
         true ->
-            gen_server:reply(Requester, ok);
+            Snapshot = antidote_lock_server_state:get_snapshot_time(NewState),
+            gen_server:reply(Requester, {ok, Snapshot});
         false ->
             ok
     end,
@@ -293,22 +305,20 @@ handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Tim
     case AllLocksAcquired of
         true ->
             % send locks to other data centers
-            handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId),
-
+            {ok, SnapshotTime} = handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId, antidote_lock_server_state:get_snapshot_time(State)),
 
             % send requests again for the locks we gave away and still need:
             RequestAgain = antidote_lock_server_state:filter_waited_for_locks([L || {L, _} <- Locks], NewState2),
             send_interdc_lock_requests(#{RequesterDcId => RequestAgain}, erlang:system_time(), MyDcId),
 
-            complete_request(From, ok, NewState2),
-            {noreply, NewState2};
+            {reply, {ok, Locks, SnapshotTime}, NewState2};
         false ->
             {noreply, NewState2}
     end.
 
--spec handoff_locks_to_other_dcs(antidote_locks:lock_spec(), dcid(), dcid()) -> {ok, snapshot_time()} | {error, reason()}.
-handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId) ->
-    {ok, TxId} = antidote:start_transaction(undefined, []),
+-spec handoff_locks_to_other_dcs(antidote_locks:lock_spec(), dcid(), dcid(), snapshot_time()) -> {ok, snapshot_time()} | {error, reason()}.
+handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId, Snapshot) ->
+    {ok, TxId} = antidote:start_transaction(Snapshot, []),
     LockObjects = get_lock_objects(Locks),
     {ok, LockValuesRaw} = antidote:read_objects(LockObjects, TxId),
     LockValues = [parse_lock_value(L) || L <- LockValuesRaw],
@@ -334,20 +344,9 @@ handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId) ->
 handle_release_locks(FromPid, State) ->
 
     CheckResult = antidote_lock_server_state:check_release_locks(FromPid, State),
-    {HandOverActions, LockRequestActions, Replies, NewState} = antidote_lock_server_state:remove_locks(FromPid, State),
+    {Actions, NewState} = antidote_lock_server_state:remove_locks(FromPid, State),
 
-    MyDcId = antidote_lock_server_state:my_dc_id(State),
-
-    % send to other data centers
-    lists:foreach(fun({HandOver, RequesterDcId}) ->
-        handoff_locks_to_other_dcs(HandOver, RequesterDcId, MyDcId)
-    end, HandOverActions),
-
-    % send requests again
-    send_interdc_lock_requests(LockRequestActions, erlang:system_time(), MyDcId),
-
-    % reply to acquired locks
-    lists:foreach(fun(R) -> gen_server:reply(R, ok) end, Replies),
+    run_actions(Actions, NewState),
 
     case CheckResult of
         {error, Reason} ->
@@ -356,8 +355,28 @@ handle_release_locks(FromPid, State) ->
             {reply, ok, NewState}
     end.
 
+-spec run_actions(antidote_lock_server_state:actions(), antidote_lock_server_state:state()) -> ok.
+run_actions(Actions, State) ->
+    {HandOverActions, LockRequestActions, Replies} = Actions,
+    MyDcId = antidote_lock_server_state:my_dc_id(State),
 
-complete_request(From, Reply, State) ->
-    {Pid, _} = From,
-    gen_server:reply(From, Reply),
-    antidote_lock_server_state:remove_locks(Pid, State).
+    % send to other data centers
+    lists:foreach(fun({HandOver, RequesterDcId, Requester}) ->
+        {ok, SnapshotTime} = handoff_locks_to_other_dcs(HandOver, RequesterDcId, MyDcId, antidote_lock_server_state:get_snapshot_time(State)),
+        gen_server:reply(Requester, {ok, HandOver, SnapshotTime})
+    end, HandOverActions),
+
+    % send requests again
+    send_interdc_lock_requests(LockRequestActions, erlang:system_time(), MyDcId),
+
+    % reply to acquired locks
+    lists:foreach(fun(R) -> gen_server:reply(R, ok) end, Replies),
+    ok.
+
+
+handle_on_receive_remote_locks(Locks, SnapshotTime, State) ->
+    State2 = antidote_lock_server_state:set_snapshot_time(State, SnapshotTime),
+    % change state to normal waiting
+    {Actions, State3} = antidote_lock_server_state:on_remote_locks_received(Locks, State2),
+    run_actions(Actions, State3),
+    {reply, ok, State3}.
