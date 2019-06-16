@@ -209,7 +209,7 @@ get_dc_descriptors() ->
     end.
 
 %% Gets the list of external datacenters
--spec get_dcs() -> [#descriptor{}].
+-spec get_dcs() -> [dcid()].
 get_dcs() ->
     [DcId || #descriptor{dcid = DcId} <- get_dc_descriptors()].
 

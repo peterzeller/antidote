@@ -133,7 +133,8 @@ request_locks_remote(Req) ->
 init([]) ->
     % we want to be notified if a transaction holding locks crashes
     process_flag(trap_exit, true),
-    {ok, antidote_lock_server_state:initial()}.
+    MyDcId = dc_meta_data_utilities:get_my_dc_id(),
+    {ok, antidote_lock_server_state:initial(MyDcId)}.
 
 handle_call(#request_locks{client_clock = ClientClock, locks = Locks}, From, State) ->
     handle_request_locks(ClientClock, Locks, From, State);
@@ -207,9 +208,9 @@ handle_request_locks(ClientClock, Locks, From, State) ->
                     SystemTime = erlang:system_time(),
                     send_interdc_lock_requests(RequestsByDc, SystemTime, MyDcId),
 
-                    NewState1 = antidote_lock_server_state:add_lock_waiting(FromPid, SystemTime, Locks, State),
+                    NewState1 = antidote_lock_server_state:add_lock_waiting(From, SystemTime, Locks, State),
                     NewState2 = maps:fold(fun(_Dc, #request_locks_remote{locks = Ls}, S) ->
-                        antidote_lock_server_state:set_lock_waiting_remote(From, Ls, S)
+                        antidote_lock_server_state:set_lock_waiting_remote(FromPid, Ls, S)
                     end, NewState1, RequestsByDc),
 
                     % will reply once all locks are acquired
@@ -282,16 +283,17 @@ try_acquire_locks(Requester, _Locks, State) ->
 
 
 handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Timestamp, my_dc_id = RequesterDcId}, From, State) ->
-    NewState = antidote_lock_server_state:add_process(From, Timestamp, true, Locks, State),
+    NewState = antidote_lock_server_state:add_process(From, Timestamp, {yes, RequesterDcId}, Locks, State),
 
-    {AllLocksAcquired, NewState2} = antidote_lock_server_state:try_acquire_locks(RequesterDcId, NewState),
+    {FromPid, _} = From,
+    {AllLocksAcquired, NewState2} = antidote_lock_server_state:try_acquire_locks(FromPid, NewState),
 
     MyDcId = antidote_lock_server_state:my_dc_id(State),
 
     case AllLocksAcquired of
         true ->
             % send locks to other data centers
-            handoff_locks_to_other_dcs_async(Locks, RequesterDcId, MyDcId),
+            handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId),
 
 
             % send requests again for the locks we gave away and still need:
@@ -304,33 +306,31 @@ handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Tim
             {noreply, NewState2}
     end.
 
--spec handoff_locks_to_other_dcs_async(antidote_locks:lock_spec(), dcid(), dcid()) -> pid().
-handoff_locks_to_other_dcs_async(Locks, RequesterDcId, MyDcId) ->
-    spawn_link(fun() ->
-        {ok, TxId} = antidote:start_transaction(ignore, []),
-        LockObjects = get_lock_objects(Locks),
-        {ok, LockValuesRaw} = antidote:read_objects(LockObjects, TxId),
-        LockValues = [parse_lock_value(L) || L <- LockValuesRaw],
-        Updates = lists:flatmap(fun({{Lock, Kind}, LockValue}) ->
-            case Kind of
-                shared ->
-                    case maps:find(RequesterDcId, LockValue) of
-                        {ok, MyDcId} ->
-                            make_lock_updates(Lock, [{RequesterDcId, RequesterDcId}]);
-                        _ ->
-                            []
-                    end;
-                exclusive ->
-                    make_lock_updates(Lock, [{K, RequesterDcId} || {K, V} <- maps:to_list(LockValue), V == MyDcId])
-            end
-        end, lists:zip(Locks, LockValues)),
-        antidote:update_objects(Updates, TxId),
-        antidote:commit_transaction(TxId)
-    end).
+-spec handoff_locks_to_other_dcs(antidote_locks:lock_spec(), dcid(), dcid()) -> {ok, snapshot_time()} | {error, reason()}.
+handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId) ->
+    {ok, TxId} = antidote:start_transaction(undefined, []),
+    LockObjects = get_lock_objects(Locks),
+    {ok, LockValuesRaw} = antidote:read_objects(LockObjects, TxId),
+    LockValues = [parse_lock_value(L) || L <- LockValuesRaw],
+    Updates = lists:flatmap(fun({{Lock, Kind}, LockValue}) ->
+        case Kind of
+            shared ->
+                case maps:find(RequesterDcId, LockValue) of
+                    {ok, MyDcId} ->
+                        make_lock_updates(Lock, [{RequesterDcId, RequesterDcId}]);
+                    _ ->
+                        []
+                end;
+            exclusive ->
+                make_lock_updates(Lock, [{K, RequesterDcId} || {K, V} <- maps:to_list(LockValue), V == MyDcId])
+        end
+    end, lists:zip(Locks, LockValues)),
+    antidote:update_objects(Updates, TxId),
+    antidote:commit_transaction(TxId).
 
 
--spec handle_release_locks(requester(), antidote_lock_server_state:state()) ->
-    {reply, ok, antidote_lock_server_state:state()}.
+-spec handle_release_locks(pid(), antidote_lock_server_state:state()) ->
+    {reply, ok | {lock_error, reason()}, antidote_lock_server_state:state()}.
 handle_release_locks(FromPid, State) ->
 
     CheckResult = antidote_lock_server_state:check_release_locks(FromPid, State),
@@ -340,7 +340,7 @@ handle_release_locks(FromPid, State) ->
 
     % send to other data centers
     lists:foreach(fun({HandOver, RequesterDcId}) ->
-        handoff_locks_to_other_dcs_async(HandOver, RequesterDcId, MyDcId)
+        handoff_locks_to_other_dcs(HandOver, RequesterDcId, MyDcId)
     end, HandOverActions),
 
     % send requests again

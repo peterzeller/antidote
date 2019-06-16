@@ -34,7 +34,7 @@
 
 -export_type([state/0]).
 
--export([initial/0, my_dc_id/1, add_process/5, try_acquire_locks/2, missing_locks_by_dc/3, missing_locks/4, set_lock_waiting_remote/3, check_release_locks/2, remove_locks/2, add_lock_waiting/4, filter_waited_for_locks/2]).
+-export([initial/1, my_dc_id/1, add_process/5, try_acquire_locks/2, missing_locks_by_dc/3, missing_locks/4, set_lock_waiting_remote/3, check_release_locks/2, remove_locks/2, add_lock_waiting/4, filter_waited_for_locks/2]).
 
 
 % state invariants:
@@ -66,7 +66,11 @@
     {waiting | held | waiting_remote, antidote_locks:lock_kind()}.
 
 
-initial() -> #state{}.
+-spec initial(dcid()) -> state().
+initial(MyDcId) -> #state{
+    dc_id = MyDcId,
+    by_pid = #{}
+}.
 
 -spec my_dc_id(state()) -> dcid().
 my_dc_id(State) ->
@@ -124,7 +128,7 @@ update_lock_state(State, Pid, Lock, LockState) ->
     State#state{
         by_pid = maps:update_with(Pid, fun(S) ->
             S#pid_state{
-                locks = orddict:update(Lock, LockState, S#pid_state.locks)
+                locks = orddict:append(Lock, LockState, S#pid_state.locks)
             }
         end, State#state.by_pid)
     }.
@@ -205,7 +209,7 @@ group_by_first(List) ->
 
 %% Adds a new process to the state.
 %% The process is initially in the waiting state.
--spec add_lock_waiting(pid(), integer(), antidote_locks:lock_spec(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
+-spec add_lock_waiting(requester(), integer(), antidote_locks:lock_spec(), antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
 add_lock_waiting(Requester, RequestTime, Locks, State) ->
     {RequesterPid, _} = Requester,
     PidState = #pid_state{
@@ -215,7 +219,7 @@ add_lock_waiting(Requester, RequestTime, Locks, State) ->
         requester = Requester
     },
     State#state{
-        by_pid = maps:put(RequesterPid, PidState, State)
+        by_pid = maps:put(RequesterPid, PidState, State#state.by_pid)
     }.
 
 % sets the given locks to the waiting_remote state
@@ -273,13 +277,13 @@ remove_locks(FromPid, State) ->
             },
             % sort processes by request time, so that the processes waiting the longest will
             % acquire their locks first
-            Pids = [Pid || {Pid, _} <- lists:sort(fun compare_by_request_time/2, maps:to_list(StateWithoutPid))],
+            Pids = [Pid || {Pid, _} <- lists:sort(fun compare_by_request_time/2, maps:to_list(StateWithoutPid#state.by_pid))],
             % try to acquire
             lists:foldl(fun(Pid, {HandOverActions, LockRequestActions, Replies, S}) ->
                 {AllAcquired, S2} = try_acquire_locks(Pid, S),
                 case AllAcquired of
                     true ->
-                        PidState = maps:get(Pid, S),
+                        PidState = maps:get(Pid, S#state.by_pid),
                         NewReplies = [PidState#pid_state.requester | Replies],
                         case PidState#pid_state.is_remote of
                             {yes, RequestingDc} ->
