@@ -32,6 +32,10 @@
 -include("antidote.hrl").
 -include("antidote_message_types.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export_type([state/0]).
 
 -export([
@@ -107,7 +111,7 @@ new_request(Requester, RequestTime, AllDcIds, LockEntries, State) ->
             % for shared locks, ask to get own lock back
             % for exclusive locks, ask everyone to give their lock
 
-            WaitingLocks = lists:concat(maps:values(RequestsByDc)),
+            WaitingLocks = [L || {L, _} <- lists:concat(maps:values(RequestsByDc))],
             State3 = set_lock_waiting_state(RequesterPid, WaitingLocks, State2, waiting, waiting_remote),
             {Actions, State4} = next_actions(State3),
 
@@ -186,7 +190,7 @@ try_acquire_locks(Pid, State) ->
     IsRemote = PidState#pid_state.is_remote,
     try_acquire_lock_list(Pid, LockStates, IsRemote, State).
 
--spec try_acquire_lock_list(pid(), ordsets:ordset(antidote_locks:lock(), lock_state_with_kind()), {yes, dcid()} | no, state()) -> {boolean(), state()}.
+-spec try_acquire_lock_list(pid(), orddict:orddict(antidote_locks:lock(), lock_state_with_kind()), {yes, dcid()} | no, state()) -> {boolean(), state()}.
 try_acquire_lock_list(Pid, LockStates, IsRemote, State) ->
     case LockStates of
         [] -> {true, State};
@@ -205,7 +209,7 @@ try_acquire_lock_list(Pid, LockStates, IsRemote, State) ->
                             {false, State}
                     end;
                 waiting_remote ->
-                    throw({'precondition violated: all locks must be available locally', Lock})
+                    {false, State}
             end
     end.
 
@@ -213,7 +217,7 @@ update_lock_state(State, Pid, Lock, LockState) ->
     State#state{
         by_pid = maps:update_with(Pid, fun(S) ->
             S#pid_state{
-                locks = orddict:append(Lock, LockState, S#pid_state.locks)
+                locks = orddict:store(Lock, LockState, S#pid_state.locks)
             }
         end, State#state.by_pid)
     }.
@@ -256,28 +260,27 @@ missing_locks_by_dc(AllDcIds, MyDcId, Locks) ->
 % returns a list of current owners for this lock
 -spec missing_locks(list(dcid()), dcid(), antidote_locks:lock_kind(), antidote_lock_server:lock_crdt_value()) -> [dcid()].
 missing_locks(AllDcIds, MyDcId, Kind, LockValue) ->
-    LockValueOwners = maps:get(owners, LockValue),
     case Kind of
         shared ->
             %check that we own at least one entry in the map
-            case lists:member(MyDcId, maps:values(LockValueOwners)) of
+            case lists:member(MyDcId, maps:values(LockValue)) of
                 true ->
                     % if we own one or more entries, we need no further requests
                     [];
                 false ->
                     % otherwise, request to get lock back from current owner:
-                    CurrentOwner = maps:get(MyDcId, LockValueOwners),
+                    CurrentOwner = maps:get(MyDcId, LockValue),
                     [CurrentOwner]
             end;
         exclusive ->
             % check that we own all datacenters
-            case lists:all(fun(Dc) -> maps:get(Dc, LockValueOwners, false) == MyDcId end, AllDcIds) of
+            case lists:all(fun(Dc) -> maps:get(Dc, LockValue, false) == MyDcId end, AllDcIds) of
                 true ->
                     % if we own all lock parts, we need no further requests
                     [];
                 false ->
                     % otherwise, request all parts from the current owners:
-                    lists:usort(maps:values(LockValueOwners)) -- [MyDcId]
+                    lists:usort(maps:values(LockValue)) -- [MyDcId]
             end
     end.
 
@@ -287,7 +290,7 @@ missing_locks(AllDcIds, MyDcId, Kind, LockValue) ->
 -spec group_by_first([{K,V}]) -> #{K => [V]}.
 group_by_first(List) ->
     M1 = lists:foldl(fun({K,V}, M) ->
-        maps:update_with(K, fun(L) -> [V|L] end, [], M)
+        maps:update_with(K, fun(L) -> [V|L] end, [V], M)
     end, maps:new(), List),
     maps:map(fun(_K,V) -> lists:reverse(V) end, M1).
 
@@ -305,10 +308,11 @@ set_lock_waiting_state(Pid, Locks, State, OldS, NewS) ->
             end, State#state.by_pid)
     }.
 
+-spec set_lock_waiting_remote_list(ordsets:ordset(antidote_locks:lock()), orddict:orddict(antidote_locks:lock(), lock_state_with_kind()), lock_state(), lock_state()) -> orddict:orddict(antidote_locks:lock(), lock_state_with_kind()).
 set_lock_waiting_remote_list(LocksToChange, Locks, OldS, NewS) ->
     [{L, case S == OldS andalso ordsets:is_element(L, LocksToChange) of
-        true -> {L, {NewS, K}};
-        false -> {L, {S, K}}
+        true -> {NewS, K};
+        false -> {S, K}
     end} || {L,{S,K}} <- Locks].
 
 
@@ -401,7 +405,7 @@ change_waiting_locks_to_remote(Locks, State) ->
 -spec merge_lock_request_actions(#{dcid() => antidote_locks:lock_spec()}, #{dcid() => antidote_locks:lock_spec()}) -> #{dcid() => antidote_locks:lock_spec()}.
 merge_lock_request_actions(A, B) ->
     maps:fold(fun(K, V1, Acc) ->
-        maps:update_with(K, fun(V2) -> ordsets:union(V1, V2) end, [], Acc)
+        maps:update_with(K, fun(V2) -> ordsets:union(V1, V2) end, V1, Acc)
     end, B, A).
 
 
@@ -451,4 +455,37 @@ set_snapshot_time(State, Time) ->
 
 
 
+-ifdef(TEST).
+% run with: rebar3 eunit --module=antidote_lock_server_state
 
+group_by_first_test() ->
+    M = group_by_first([{a, 1}, {b, 2}, {a, 3}, {a, 4}]),
+    ?assertEqual(#{a => [1, 3, 4], b => [2]}, M).
+
+shared_lock_ok_test() ->
+    S1 = initial(dc1),
+    R1 = {p1, t1},
+    {Actions, _S2} = new_request(R1, 10, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc2, dc3 => dc3}}], S1),
+    {HandOverActions, LockRequestActions, Replies} = Actions,
+    ?assertEqual([], HandOverActions),
+    ?assertEqual(#{}, LockRequestActions),
+    ?assertEqual([R1], Replies),
+    ok.
+
+shared_lock_fail_test() ->
+    S1 = initial(dc1),
+    R1 = {p1, t1},
+    % data center 3 has our lock, so we need to request it
+    {Actions, _S2} = new_request(R1, 10, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc3, dc2 => dc2, dc3 => dc3}}], S1),
+    {HandOverActions, LockRequestActions, Replies} = Actions,
+    ?assertEqual([], HandOverActions),
+    ?assertEqual(#{dc3 => [{lock1, shared}]}, LockRequestActions),
+    ?assertEqual([], Replies),
+    ok.
+
+%%HandOverActions :: [{antidote_locks:lock_spec(), dcid(), requester()}],
+%%LockRequestActions :: #{dcid() => antidote_locks:lock_spec()},
+%%Replies :: [requester()]}.
+
+
+-endif.
