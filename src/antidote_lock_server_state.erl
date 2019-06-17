@@ -117,7 +117,7 @@ new_request(Requester, RequestTime, AllDcIds, LockEntries, State) ->
 
 -spec new_remote_request(requester(), integer(), antidote_locks:lock_spec(), dcid(), state()) -> {actions(), state()}.
 new_remote_request(From, Timestamp, Locks, RequesterDcId, State) ->
-    NewState = antidote_lock_server_state:add_process(From, Timestamp, {yes, RequesterDcId}, Locks, State),
+    NewState = add_process(From, Timestamp, {yes, RequesterDcId}, Locks, State),
     next_actions(NewState).
 
 -spec on_remote_locks_received(snapshot_time(), [dcid()], ordsets:ordset({antidote_locks:lock_spec_item(), antidote_lock_crdt:value()}), state()) -> {actions(), state()}.
@@ -295,7 +295,7 @@ group_by_first(List) ->
 
 
 % sets the given locks to the waiting_remote state
--spec set_lock_waiting_state(pid(), ordsets:ordset(antidote_locks:lock()), antidote_lock_server_state:state(), lock_state(), lock_state()) -> antidote_lock_server_state:state().
+-spec set_lock_waiting_state(pid(), ordsets:ordset(antidote_locks:lock()), state(), lock_state(), lock_state()) -> state().
 set_lock_waiting_state(Pid, Locks, State, OldS, NewS) ->
     State#state{
         by_pid = maps:update_with(Pid, fun(S) ->
@@ -313,7 +313,7 @@ set_lock_waiting_remote_list(LocksToChange, Locks, OldS, NewS) ->
 
 
 % sets the given locks to the waiting_remote state
--spec update_waiting_remote([dcid()], #{antidote_locks:lock() => antidote_lock_crdt:value()}, antidote_lock_server_state:state()) -> antidote_lock_server_state:state().
+-spec update_waiting_remote([dcid()], #{antidote_locks:lock() => antidote_lock_crdt:value()}, state()) -> state().
 update_waiting_remote(AllDcs, LockValues, State) ->
     MyDcId = my_dc_id(State),
     State#state{
