@@ -457,7 +457,7 @@ max_lock_kind(_, exclusive) -> exclusive;
 max_lock_kind(shared, shared) -> shared.
 
 
--spec set_snapshot_time(state(), snapshot_time()) -> state().
+-spec set_snapshot_time(snapshot_time(), state()) -> state().
 set_snapshot_time(Time, State) ->
     State#state{snapshot_time = Time}.
 

@@ -189,7 +189,7 @@ handle_request_locks(ClientClock, Locks, From, State) ->
             % if we cannot read the locks we fail immediately since waiting
             % would probably take too much time
             {reply, {could_not_obtain_logs, Reason}, State};
-        {ok, LockValuesRaw, _ReadClock} ->
+        {ok, LockValuesRaw, ReadClock} ->
             % link the requester:
             % if we crash, then the transaction using the locks should crash as well
             % if the transaction crashes, we want to know about that to release the lock
@@ -201,7 +201,7 @@ handle_request_locks(ClientClock, Locks, From, State) ->
             LockValues = [antidote_lock_crdt:parse_lock_value(V) || V <- LockValuesRaw],
             LockEntries = lists:zip(Locks, LockValues),
 
-            {Actions, NewState} = antidote_lock_server_state:new_request(From, erlang:system_time(), AllDcIds, LockEntries, State),
+            {Actions, NewState} = antidote_lock_server_state:new_request(From, erlang:system_time(), ReadClock, AllDcIds, LockEntries, State),
             run_actions(Actions, NewState),
             {noreply, NewState}
     end.
