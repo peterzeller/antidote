@@ -1047,7 +1047,7 @@ before_commit_checks(State) ->
             _ ->
                 CommitTime = State#coord_state.commit_time,
                 DcId = ?DC_META_UTIL:get_my_dc_id(),
-                ?VECTORCLOCK:set_clock_of_dc(DcId, CommitTime, Transaction#transaction.vec_snapshot_time)
+                ?VECTORCLOCK:set(DcId, CommitTime, Transaction#transaction.vec_snapshot_time)
         end,
     Locks = State#coord_state.locks,
     case antidote_locks:release_locks(CommitSnapshot, Locks) of
