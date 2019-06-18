@@ -49,6 +49,17 @@
     terminate/2,
     code_change/3]).
 
+% how long (in milliseconds) can a local server prefer local requests over remote requests?
+% (higher values should give higher throughput but also higher latency if remote lock requests are necessary)
+-define(INTER_DC_LOCK_REQUEST_DELAY, 500).
+
+% how long (in milliseconds) may a transaction take to acquire the necessary locks?
+-define(LOCK_REQUEST_TIMEOUT, 5000).
+-define(LOCK_REQUEST_RETRIES, 3).
+
+% how long (in milliseconds) can a transaction be alive when it is holding locks?
+-define(MAX_TRANSACTION_TIME, 5000).
+
 -define(SERVER, ?MODULE).
 
 % there is one lock-part per datacenter.
@@ -94,21 +105,21 @@ start_link() ->
 
 -spec request_locks(snapshot_time(), antidote_locks:lock_spec()) -> {ok, snapshot_time()} | {error, any()}.
 request_locks(ClientClock, Locks) ->
-    request(#request_locks{client_clock = ClientClock, locks = Locks}, 3).
+    request(#request_locks{client_clock = ClientClock, locks = Locks}, ?LOCK_REQUEST_TIMEOUT, ?LOCK_REQUEST_RETRIES).
 
 -spec release_locks(snapshot_time(), antidote_locks:lock_spec()) -> ok | {error, any()}.
 release_locks(CommitTime, Locks) ->
-    request(#release_locks{commit_time = CommitTime, locks = Locks}, 0).
+    request(#release_locks{commit_time = CommitTime, locks = Locks}, infinity, 0).
 
 -spec on_receive_remote_locks(antidote_locks:lock_spec(), snapshot_time()) -> ok | {error, any()}.
 on_receive_remote_locks(Locks, SnapshotTime) ->
-    request(#on_receive_remote_locks{snapshot_time = SnapshotTime, locks = Locks}, 0).
+    request(#on_receive_remote_locks{snapshot_time = SnapshotTime, locks = Locks}, infinity, 0).
 
 
 % sends a request to the global gen-server instance, starting it if necessary
-request(Req, NumTries) ->
+request(Req, Timeout, NumTries) ->
     try
-        gen_server:call({global, ?SERVER}, Req)
+        gen_server:call({global, ?SERVER}, Req, Timeout)
     catch
         {'EXIT', {noproc, _}} when NumTries > 0 ->
             % if there is no lock server running, start one and try again
@@ -120,16 +131,19 @@ request(Req, NumTries) ->
                 % to avoid conflicts with other shards who might als try to start a server
                 restart => transient
             }),
-            request(Req, NumTries - 1);
+            request(Req, Timeout, NumTries - 1);
         Reason ->
             logger:error("Could not handle antidote_lock_server request ~p:~n~p", [Req, Reason]),
-            {error, Reason}
+            case NumTries > 0 of
+                true -> request(Req, Timeout, NumTries - 1);
+                false -> {error, Reason}
+            end
     end.
 
 % called in inter_dc_query_response
 -spec request_locks_remote(#request_locks_remote{}) -> ok | {error, Reason :: any()}.
 request_locks_remote(Req) ->
-    request(Req, 3).
+    request(Req, infinity, 3).
 
 
 
@@ -157,8 +171,17 @@ handle_cast(_Request, State) ->
     {noreply, State}.
 
 handle_info({'EXIT', FromPid, _Reason}, State) ->
-    % when a process crashes, it's locks are released
+    % when a process crashes, its locks are released
     {reply, _, NewState} = handle_release_locks(FromPid, State),
+    {noreply, NewState};
+handle_info({transaction_timeout, FromPid}, State) ->
+    {reply, Res, NewState} = handle_release_locks(FromPid, State),
+    case Res of
+        ok ->
+            % kill the transaction process if it still has the locks
+            erlang:exit(FromPid, kill);
+        _ -> ok
+    end,
     {noreply, NewState};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -195,13 +218,19 @@ handle_request_locks(ClientClock, Locks, From, State) ->
             % if the transaction crashes, we want to know about that to release the lock
             {FromPid, _} = From,
             link(FromPid),
+            case ?MAX_TRANSACTION_TIME < infinity of
+                true ->
+                    % send a message so that we can kill the transaction if it takes too long
+                    timer:send_after(?MAX_TRANSACTION_TIME, {transaction_timeout, FromPid});
+                false -> ok
+            end,
 
             AllDcIds = dc_meta_data_utilities:get_dcs(),
 
             LockValues = [antidote_lock_crdt:parse_lock_value(V) || V <- LockValuesRaw],
             LockEntries = lists:zip(Locks, LockValues),
 
-            {Actions, NewState} = antidote_lock_server_state:new_request(From, erlang:system_time(), ReadClock, AllDcIds, LockEntries, State),
+            {Actions, NewState} = antidote_lock_server_state:new_request(From, erlang:system_time(millisecond), ReadClock, AllDcIds, LockEntries, State),
             run_actions(Actions, NewState),
             {noreply, NewState}
     end.
@@ -282,8 +311,8 @@ run_actions(Actions, State) ->
         gen_server:reply(Requester, {ok, HandOver, SnapshotTime})
     end, HandOverActions),
 
-    % send requests again
-    send_interdc_lock_requests(LockRequestActions, erlang:system_time(), MyDcId),
+    % send requests
+    send_interdc_lock_requests(LockRequestActions, erlang:system_time(millisecond) + ?INTER_DC_LOCK_REQUEST_DELAY, MyDcId),
 
     % reply to acquired locks
     lists:foreach(fun(R) -> gen_server:reply(R, ok) end, Replies),
