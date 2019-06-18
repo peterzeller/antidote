@@ -218,12 +218,8 @@ handle_request_locks(ClientClock, Locks, From, State) ->
             % if the transaction crashes, we want to know about that to release the lock
             {FromPid, _} = From,
             link(FromPid),
-            case ?MAX_TRANSACTION_TIME < infinity of
-                true ->
-                    % send a message so that we can kill the transaction if it takes too long
-                    timer:send_after(?MAX_TRANSACTION_TIME, {transaction_timeout, FromPid});
-                false -> ok
-            end,
+            % send a message so that we can kill the transaction if it takes too long
+            timer:send_after(?MAX_TRANSACTION_TIME, {transaction_timeout, FromPid}),
 
             AllDcIds = dc_meta_data_utilities:get_dcs(),
 
