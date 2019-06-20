@@ -767,15 +767,6 @@ helper_start_transaction(Locks,Node,Tries) ->
         {badrpc,_}->
             helper_start_transaction(Locks,Node,Tries-1)
     end.
-to_string_helper([])->
-    "[]";
-to_string_helper([HD|TL])->
-    to_string_helper(TL,"["++atom_to_list(HD)).
-to_string_helper([],String)->
-    String++"]";
-to_string_helper([HD|TL],String)->
-    New_String = String++", "++atom_to_list(HD),
-    to_string_helper(TL, New_String).
 
 
 %% Tests some internal functions of lock_mgr_es

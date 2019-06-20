@@ -33,7 +33,6 @@
     locks_in_sequence_check/1,
     locks_required_by_another_transaction/1,
     lock_acquisition_test/1,
-    some_test/1,
     get_lock_owned_by_other_dc_1/1,
     get_lock_owned_by_other_dc_2/1,
     multi_value_register_test/1,
@@ -80,19 +79,18 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-    simple_transaction_tests_with_locks
+%%    simple_transaction_tests_with_locks,
 %%    locks_in_sequence_check,
-%%    locks_required_by_another_transaction,
+%%    locks_required_by_another_transaction, %fail
 %%    lock_acquisition_test,
-%%    some_test,
 %%    get_lock_owned_by_other_dc_2,
-%%    multi_value_register_test,
-%%    asynchronous_test_1,
-%%    asynchronous_test_2,
-%%    asynchronous_test_3,
-%%    asynchronous_test_4,
-%%    asynchronous_test_5,
-%%    a_lot_of_locks_per_transaction_1,
+    multi_value_register_test % fail
+%%    asynchronous_test_1, % fail
+%%    asynchronous_test_2, % fail
+%%    asynchronous_test_3, % fail
+%%    asynchronous_test_4, % fail
+%%    asynchronous_test_5, % fail
+%%    a_lot_of_locks_per_transaction_1,  % fail/timeout?
 %%    a_lot_of_locks_per_transaction_2%,
     %cluster_failure_test_1,
     %cluster_failure_test_2
@@ -113,7 +111,7 @@ simple_transaction_tests_with_locks(Config) ->
     Updates = lists:map(fun({Object, IncVal}) ->
         {Object, increment, IncVal}
     end, lists:zip(Objects, IncValues)),
-    {ok, TxId} = rpc:call(Node, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+    {ok, TxId} = rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     %% update objects one by one.
     txn_seq_update_check(Node, TxId, Updates),
     % read objects one by one
@@ -123,9 +121,6 @@ simple_transaction_tests_with_locks(Config) ->
     % read objects all at once
     {ok, Res} = rpc:call(Node, antidote, read_objects, [Objects, TxId2]),
     {ok, _} = rpc:call(Node, antidote, commit_transaction, [TxId2]),
-    % checks if all locks are released
-    Lock_Info2 = rpc:call(Node, lock_mgr, local_locks_info, []),
-    false = lists:keyfind(TxId,1,Lock_Info2),
     % checks if the updates were successful
     ?assertEqual([1, 2, 3, 4], Res).
 
@@ -133,10 +128,8 @@ simple_transaction_tests_with_locks(Config) ->
 locks_in_sequence_check(Config) ->
     Node = hd(hd(proplists:get_value(nodes, Config))),
     Keys = [lock5, lock6, lock7, lock8],
-    {ok, TxId} = rpc:call(Node, antidote, start_transaction, [ignore, [{locks,Keys}]]),
-    Lock_Info1 = rpc:call(Node, lock_mgr, local_locks_info, []),
-    {_,{using,Used_Keys}} = lists:keyfind(TxId,1,Lock_Info1),
-    {error,{error,[{_TxId,Missing_Keys}]}} = rpc:call(Node, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+    {ok, TxId} = rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+    {error,{error,[{_TxId,Missing_Keys}]}} = rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     Type = antidote_crdt_counter_pn,
     Bucket = antidote_bucket,
     IncValues = [1, 2, 3, 4],
@@ -156,12 +149,8 @@ locks_in_sequence_check(Config) ->
     %% read objects all at once
     {ok, _Res} = rpc:call(Node, antidote, read_objects, [Objects, TxId2]),
     {ok, _} = rpc:call(Node, antidote, commit_transaction, [TxId2]),
-    Lock_Info2 = rpc:call(Node, lock_mgr, local_locks_info, []),
-    ?assertEqual(length(Keys),length(Used_Keys)),
-    ?assertEqual([],Keys--Used_Keys),
     ?assertEqual(length(Keys),length(Missing_Keys)),
     ?assertEqual([],Keys -- Missing_Keys),
-    false = lists:keyfind(TxId,1,Lock_Info2),
     ok.
 
 %% starts a transaction on the leading node aquiring some lock.
@@ -172,18 +161,12 @@ locks_required_by_another_transaction(Config) ->
     Node3 = hd(hd(tl(Nodes))),
     Node4 = hd(hd(tl(tl(Nodes)))),
     Keys = [lock14, lock13, lock12, lock11],
-    {ok, TxId} = rpc:call(Node1, antidote, start_transaction, [ignore, [{locks,Keys}]]),
-    Lock_Info1 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-    {_,{using,Used_Keys}} = lists:keyfind(TxId,1,Lock_Info1),
+    {ok, TxId} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     % Test if transaction requiring the used keys can not start a transaction
-    {error,{error,[{_TxId,Missing_Keys0}]}} = rpc:call(Node1, antidote, start_transaction, [ignore, [{locks,Keys}]]),
-    {error,{error,Missing_Keys2}} = rpc:call(Node3, antidote, start_transaction, [ignore, [{locks,[hd(tl(Keys))]}]]),
-    {error,{error,Missing_Keys3}} = rpc:call(Node4, antidote, start_transaction, [ignore, [{locks,tl(Keys)}]]),
+    {error,{error,[{_TxId,Missing_Keys0}]}} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+    {error,{error,Missing_Keys2}} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,[hd(tl(Keys))]}]]),
+    {error,{error,Missing_Keys3}} = rpc:call(Node4, antidote, start_transaction, [ignore, [{exclusive_locks,tl(Keys)}]]),
     {ok, _Clock} = rpc:call(Node1, antidote, commit_transaction, [TxId]),
-    Lock_Info2 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-    false = lists:keyfind(TxId,1,Lock_Info2),
-    ?assertEqual(length(Keys),length(Used_Keys)),
-    ?assertEqual([],Keys--Used_Keys),
     ?assertEqual(length(Keys),length(Missing_Keys0)),
     ?assertEqual([],Keys -- Missing_Keys0),
     ?assertEqual(length([hd(tl(Keys))]),length(Missing_Keys2)),
@@ -198,28 +181,12 @@ lock_acquisition_test(Config) ->
     Node1 = hd(hd(Nodes)),
     Keys = [lock21, lock22, lock23, lock24],
 
-    {ok, TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{locks,Keys}]]),
-    Lock_Info1 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-    {_,{using,Used_Keys1}} = lists:keyfind(TxId1,1,Lock_Info1),
+    {ok, TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     {ok, _Clock1} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
-    {ok, TxId2} = rpc:call(Node1, antidote, start_transaction, [ignore, [{locks,Keys}]]),
-    Lock_Info2 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-    {_,{using,Used_Keys2}} = lists:keyfind(TxId2,1,Lock_Info2),
+    {ok, TxId2} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     {ok, _Clock2} = rpc:call(Node1, antidote, commit_transaction, [TxId2]),
-    {ok, TxId3} = rpc:call(Node1, antidote, start_transaction, [ignore, [{locks,Keys}]]),
-    Lock_Info3 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-    {_,{using,Used_Keys3}} = lists:keyfind(TxId3,1,Lock_Info3),
+    {ok, TxId3} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     {ok, _Clock3} = rpc:call(Node1, antidote, commit_transaction, [TxId3]),
-    Lock_Info4 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-    false = lists:keyfind(TxId1,1,Lock_Info4),
-    false = lists:keyfind(TxId2,1,Lock_Info4),
-    false = lists:keyfind(TxId3,1,Lock_Info4),
-    ?assertEqual(length(Keys),length(Used_Keys1)),
-    ?assertEqual([],Keys--Used_Keys1),
-    ?assertEqual(length(Keys),length(Used_Keys2)),
-    ?assertEqual([],Keys--Used_Keys2),
-    ?assertEqual(length(Keys),length(Used_Keys3)),
-    ?assertEqual([],Keys--Used_Keys3),
     ok.
 
 %% Test if sequential lock acquisition works as intendet
@@ -230,26 +197,12 @@ get_lock_owned_by_other_dc_1(Config) ->
     Node4 = hd(hd(tl(tl(Nodes)))),
     Keys = [lock31, lock32, lock33, lock34],
 
-    {ok, TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{locks,Keys}]]),
-    Lock_Info1 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-    {_,{using,Used_Keys1}} = lists:keyfind(TxId1,1,Lock_Info1),
+    {ok, TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     {ok, _Clock1} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
-    Lock_Info1_2 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-    false = lists:keyfind(TxId1,1,Lock_Info1_2),
-    {ok, TxId2} = rpc:call(Node3, antidote, start_transaction, [ignore, [{locks,[lock31]}]]),
-    Lock_Info2 = rpc:call(Node3, lock_mgr, local_locks_info, []),
-    {_,{using,Used_Keys2}} = lists:keyfind(TxId2,1,Lock_Info2),
+    {ok, TxId2} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,[lock31]}]]),
     {ok, _Clock2} = rpc:call(Node3, antidote, commit_transaction, [TxId2]),
-    {ok, TxId3} = rpc:call(Node4, antidote, start_transaction, [ignore, [{locks,[lock32,lock33,lock34]}]]),
-    Lock_Info3 = rpc:call(Node4, lock_mgr, local_locks_info, []),
-    {_,{using,Used_Keys3}} = lists:keyfind(TxId3,1,Lock_Info3),
+    {ok, TxId3} = rpc:call(Node4, antidote, start_transaction, [ignore, [{exclusive_locks,[lock32,lock33,lock34]}]]),
     {ok, _Clock3} = rpc:call(Node4, antidote, commit_transaction, [TxId3]),
-    ?assertEqual(length(Keys),length(Used_Keys1)),
-    ?assertEqual([],Keys--Used_Keys1),
-    ?assertEqual(1,length(Used_Keys2)),
-    ?assertEqual([],[lock31]--Used_Keys2),
-    ?assertEqual(3,length(Used_Keys3)),
-    ?assertEqual([],[lock32,lock33,lock34]--Used_Keys3),
     ok.
 %% Test if sequential lock acquisition works as intendet
 get_lock_owned_by_other_dc_2(Config) ->
@@ -263,15 +216,9 @@ get_lock_owned_by_other_dc_2(Config) ->
 %% Helper function for get_lock_owned_by_other_dc_2
 helper_do_lock_requests([],_)-> ok;
 helper_do_lock_requests([Current_Node | Remaining_Nodes],Keys)->
-    case rpc:call(Current_Node, antidote, start_transaction, [ignore, [{locks,Keys}]]) of
+    case rpc:call(Current_Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
-            Lock_Info1 = rpc:call(Current_Node, lock_mgr, local_locks_info, []),
             {ok, _Clock1} = rpc:call(Current_Node, antidote, commit_transaction, [TxId1]),
-            Lock_Info1_2 = rpc:call(Current_Node, lock_mgr, local_locks_info, []),
-            {_,{using,Used_Keys1}} = lists:keyfind(TxId1,1,Lock_Info1),
-            ?assertEqual(length(Keys),length(Used_Keys1)),
-            ?assertEqual([],Keys--Used_Keys1),
-            ?assertEqual(false, lists:keyfind(TxId1,1,Lock_Info1_2)),
             helper_do_lock_requests(Remaining_Nodes, Keys);
         {error,{error,_Missing_Locks}} ->
             helper_do_lock_requests([Current_Node|Remaining_Nodes], Keys)
@@ -284,13 +231,21 @@ multi_value_register_test(Config) ->
     Node4 = hd(hd(tl(tl(Nodes)))),
     Key = multi_value_register,
     Bound_object = {Key, antidote_crdt_register_mv, antidote_bucket},
-    Updates_List=[{[[]],Node1,<<"n1">>},{<<"n1">>,Node3,<<"x2">>},{<<"x2">>,Node3,<<"x3">>},{<<"x3">>,Node4,<<"y4">>},{<<"y4">>,Node1,<<"n5">>}
-        ,{<<"n5">>,Node1,<<"n6">>},{<<"n6">>,Node4,<<"y7">>},{<<"y7">>,Node1,<<"n8">>},{<<"n8">>,Node3,<<"x9">>},{<<"x9">>,Node4,<<"y10">>}],
+    Updates_List=[{[[]],Node1,<<"n1">>},
+        {<<"n1">>,Node3,<<"x2">>},
+        {<<"x2">>,Node3,<<"x3">>},
+        {<<"x3">>,Node4,<<"y4">>},
+        {<<"y4">>,Node1,<<"n5">>},
+        {<<"n5">>,Node1,<<"n6">>},
+        {<<"n6">>,Node4,<<"y7">>},
+        {<<"y7">>,Node1,<<"n8">>},
+        {<<"n8">>,Node3,<<"x9">>},
+        {<<"x9">>,Node4,<<"y10">>}],
     helper_multi_value_register_test(Updates_List,[Key],Bound_object).
 %% helper functin for multi_value_register_test
 helper_multi_value_register_test([],_,_)-> ok;
 helper_multi_value_register_test([{Value1,Current_Node,Value2} | Remaining_Nodes],Keys,Object)->
-    case rpc:call(Current_Node, cure, start_transaction, [ignore, [{locks,Keys}]]) of
+    case rpc:call(Current_Node, cure, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
             case Value2 of
                 <<"n1">> ->
@@ -330,15 +285,15 @@ asynchronous_test_1(Config) ->
                     receive
                         {done,Node3,3,_Clocks3} ->
 
-                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
                             {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
 
-                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
                             {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
 
-                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
                             {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
                             {ok, [Res1]} = Res_11,
@@ -377,13 +332,13 @@ asynchronous_test_2(Config) ->
                     receive
                         {done,Node3,3,_Clocks3} ->
 
-                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
                             {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
-                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
                             {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
-                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
                             {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
                             {ok, [Res1]} = Res_11,
@@ -403,7 +358,7 @@ asynchronous_test_helper(Node,_,_,0,Clocks,Caller,_,Id)->
     Caller ! {done,Node,Id,Clocks};
 
 asynchronous_test_helper(Node,Keys,Object,Increments,Clocks,Caller,Delay,Id)->
-    case rpc:call(Node, antidote, start_transaction, [ignore, [{locks,Keys}]]) of
+    case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
             ok = rpc:call(Node, antidote, update_objects,[[{Object, increment, 1}],TxId1]),
             {ok, Clock1} = rpc:call(Node, antidote, commit_transaction, [TxId1]),
@@ -436,13 +391,13 @@ asynchronous_test_3(Config) ->
                     receive
                         {done,Node3,3,_Clocks3} ->
 
-                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
                             {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
-                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
                             {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
-                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
                             {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
                             {ok, [[Res1]|[]]} = Res_11,
@@ -481,13 +436,13 @@ asynchronous_test_4(Config) ->
                     receive
                         {done,Node3,3,_Clocks3} ->
 
-                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
                             {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
-                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
                             {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
-                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
                             Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
                             {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
                             {ok, [[Res1]|[]]} = Res_11,
@@ -509,7 +464,7 @@ asynchronous_test_helper2(Node,_,_,0,Clocks,Caller,_,Id)->
     Caller ! {done,Node,Id,Clocks};
 
 asynchronous_test_helper2(Node,Keys,Object,Increments,Clocks,Caller,Delay,Id)->
-    case rpc:call(Node, antidote, start_transaction, [ignore, [{locks,Keys}]]) of
+    case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
             {ok, Res} = rpc:call(Node, antidote, read_objects, [[Object],TxId1]),
             case Res of
@@ -599,7 +554,7 @@ helper_receive_result({Node1,Id1},{Node2,Id2},{Node3,Id3},_Info) ->
 
 
 helper_check_result1(Node,Keys,Object,Value) ->
-    case rpc:call(Node, antidote, start_transaction, [ignore, [{locks,Keys}]]) of
+    case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok,TxId} ->
             {ok, [Res]} = rpc:call(Node, antidote, read_objects, [[Object],TxId]),
             {ok, _} = rpc:call(Node, antidote, commit_transaction, [TxId]),
@@ -609,7 +564,7 @@ helper_check_result1(Node,Keys,Object,Value) ->
     end.
 
 helper_check_result2(Node,Keys,Object,Value) ->
-    case rpc:call(Node, antidote, start_transaction, [ignore, [{locks,Keys}]]) of
+    case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok,TxId} ->
             {ok, [[Res]|[]]} = rpc:call(Node, antidote, read_objects, [[Object],TxId]),
             {ok, _} = rpc:call(Node, antidote, commit_transaction, [TxId]),
@@ -710,7 +665,7 @@ cluster_failure_test_2(Config) ->
             % TODO This rpc:call will crash the lock_mgr and wont let it recover
             % (Assumption: The inter_dc communication does not handle this case and lock_mgr does
             % not have a build in error handling process for this case.)
-            {error,_} = rpc:call(Node2, antidote, start_transaction, [ignore, [{locks,Keys}]]),
+            {error,_} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
             %% Start the node back up and be sure everything works
             ct:print("Restarting node ~w", [Node3]),
             [Node3] = test_utils:restart_nodes([Node3], Config),
@@ -721,7 +676,7 @@ cluster_failure_test_2(Config) ->
 helper_start_transaction(Locks,_Node,0) ->
     {error,"Could not aquire : "++to_string_helper(Locks)};
 helper_start_transaction(Locks,Node,Tries) ->
-    case rpc:call(Node, antidote, start_transaction, [ignore, [{locks,Locks}]]) of
+    case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Locks}]]) of
         {ok,TxId}->
             {ok,TxId};
         {error,_}->
@@ -739,18 +694,6 @@ to_string_helper([HD|TL],String)->
     New_String = String++", "++atom_to_list(HD),
     to_string_helper(TL, New_String).
 
-
-%% Tests some internal functions of lock_mgr
-some_test(Config) ->
-    Nodes = proplists:get_value(nodes, Config),
-    Node1 = hd(hd(Nodes)),
-    Node3 = hd(hd(tl(Nodes))),
-    Node4 = hd(hd(tl(tl(Nodes)))),
-    A = rpc:call(Node1, lock_mgr, am_i_leader, []),
-    B = rpc:call(Node3, lock_mgr, am_i_leader, []),
-    C = rpc:call(Node4, lock_mgr, am_i_leader, []),
-    [true,false,false] = [A,B,C],
-    ok.
 
 txn_seq_read_check(Node, TxId, Objects, ExpectedValues) ->
     lists:map(fun({Object, Expected}) ->

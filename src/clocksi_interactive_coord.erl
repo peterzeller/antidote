@@ -597,8 +597,9 @@ init_state(StayAlive, FullCommit, IsStatic, Properties) ->
 %% @doc TODO
 -spec start_tx_internal(pid(), snapshot_time(), proplists:proplist(), #coord_state{}) -> {ok, #coord_state{}} | {error, any()}.
 start_tx_internal(From, ClientClock, Properties, State = #coord_state{stay_alive = StayAlive, is_static = IsStatic}) ->
-    Locks = ordsets:from_list([{Lock, shared_lock} || Lock <- proplists:get_value(shared_locks, Properties, [])]
-        ++ [{Lock, exclusive_lock} || Lock <- proplists:get_value(exclusive_locks, Properties, [])]),
+    Locks = ordsets:from_list([{Lock, shared} || Lock <- proplists:get_value(shared_locks, Properties, [])]
+        ++ [{Lock, exclusive} || Lock <- proplists:get_value(exclusive_locks, Properties, [])]),
+    logger:notice("Starting transaction~n  ClientClock = ~p~n  Locks = ~p", [ClientClock, Locks]),
     case antidote_locks:obtain_locks(ClientClock, Locks) of
         {error, Reason} ->
             {error, Reason};
@@ -671,6 +672,7 @@ execute_command(read, {Key, Type}, Sender, State = #coord_state{
 
 %% @doc Read a batch of objects, asynchronous
 execute_command(read_objects, Objects, Sender, State = #coord_state{transaction=Transaction}) ->
+    logger:info("read_objects(~p)", [Objects]),
     ExecuteReads = fun({Key, Type}, AccState) ->
         ?PROMETHEUS_COUNTER:inc(antidote_operations_total, [read_async]),
         Partition = ?LOG_UTIL:get_key_partition(Key),
@@ -689,6 +691,7 @@ execute_command(read_objects, Objects, Sender, State = #coord_state{transaction=
 
 %% @doc Perform update operations on a batch of Objects
 execute_command(update_objects, UpdateOps, Sender, State = #coord_state{transaction=Transaction}) ->
+    logger:info("update_objects(~p)", [UpdateOps]),
     ExecuteUpdates = fun(Op, AccState=#coord_state{
         client_ops = ClientOps0,
         updated_partitions = UpdatedPartitions0
@@ -1044,10 +1047,13 @@ before_commit_checks(State) ->
         case State#coord_state.updated_partitions of
             [] ->
                 Transaction#transaction.vec_snapshot_time;
-            _ ->
+            _ when is_integer(State#coord_state.commit_time) ->
                 CommitTime = State#coord_state.commit_time,
                 DcId = ?DC_META_UTIL:get_my_dc_id(),
-                ?VECTORCLOCK:set(DcId, CommitTime, Transaction#transaction.vec_snapshot_time)
+                ?VECTORCLOCK:set(DcId, CommitTime, Transaction#transaction.vec_snapshot_time);
+            _ ->
+                logger:error("Transaction committing without commit time set ~p", [State#coord_state.commit_time]),
+                Transaction#transaction.vec_snapshot_time
         end,
     Locks = State#coord_state.locks,
     case antidote_locks:release_locks(CommitSnapshot, Locks) of
