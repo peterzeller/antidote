@@ -23,41 +23,41 @@
 
 %% common_test callbacks
 -export([init_per_suite/1,
-         end_per_suite/1,
-         init_per_testcase/2,
-         end_per_testcase/2,
-         all/0]).
+    end_per_suite/1,
+    init_per_testcase/2,
+    end_per_testcase/2,
+    all/0]).
 
 %% tests
 -export([
-         single_dc_sl_test1/1,
-         single_dc_sl_test2/1,
-         lock_already_exclusive_test1/1,
-         lock_already_exclusive_test2/1,
-         lock_already_exclusive_test3/1,
-         lock_already_shared_test1/1,
-         lock_already_shared_test2/1,
-         lock_already_shared_test3/1,
-         lock_shared_and_exclusive_test1/1,
-         lock_shared_and_exclusive_test2/1,
-         lock_shared_and_exclusive_test3/1,
-         lock_shared_and_exclusive_test4/1,
-         lock_acquisition_in_sequence_test1/1,
-         lock_acquisition_in_sequence_test2/1,
-         shared_locks_acquisition_in_sequence_test1/1,
-         shared_locks_acquisition_in_sequence_test2/1,
-         shared_locks_asynchroneous_test1/1,
-         shared_locks_asynchroneous_test2/1,
-         shared_locks_asynchroneous_test3/1,
-         shared_locks_asynchroneous_test4/1,
-         different_key_types_test1/1,
-         locks_and_exclusive_locks_together_test1/1
-        ]).
+    single_dc_sl_test1/1,
+    single_dc_sl_test2/1,
+    lock_already_exclusive_test1/1,
+    lock_already_exclusive_test2/1,
+    lock_already_exclusive_test3/1,
+    lock_already_shared_test1/1,
+    lock_already_shared_test2/1,
+    lock_already_shared_test3/1,
+    lock_shared_and_exclusive_test1/1,
+    lock_shared_and_exclusive_test2/1,
+    lock_shared_and_exclusive_test3/1,
+    lock_shared_and_exclusive_test4/1,
+    lock_acquisition_in_sequence_test1/1,
+    lock_acquisition_in_sequence_test2/1,
+    shared_locks_acquisition_in_sequence_test1/1,
+    shared_locks_acquisition_in_sequence_test2/1,
+    shared_locks_asynchroneous_test1/1,
+    shared_locks_asynchroneous_test2/1,
+    shared_locks_asynchroneous_test3/1,
+    shared_locks_asynchroneous_test4/1,
+    different_key_types_test1/1,
+    locks_and_exclusive_locks_together_test1/1
+]).
 
 -export([
-        transaction_asynchroneous_helper2/6,
-        transaction_asynchroneous_in_sequence_helper2/8
-        ]).
+    transaction_asynchroneous_helper2/6,
+    transaction_asynchroneous_in_sequence_helper2/8
+]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -88,29 +88,29 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-         single_dc_sl_test1,
-         single_dc_sl_test2,
-         lock_already_exclusive_test1,
-         lock_already_exclusive_test2,
-         lock_already_exclusive_test3,
-         lock_already_shared_test1,
-         lock_already_shared_test2,
-         lock_already_shared_test3,
-         lock_shared_and_exclusive_test1,
-         lock_shared_and_exclusive_test2,
-         lock_shared_and_exclusive_test3,
-         lock_shared_and_exclusive_test4,
-         lock_acquisition_in_sequence_test1,
-         lock_acquisition_in_sequence_test2,
-         shared_locks_acquisition_in_sequence_test1,
-         shared_locks_acquisition_in_sequence_test2,
-         shared_locks_asynchroneous_test1,
-         shared_locks_asynchroneous_test2,
-         shared_locks_asynchroneous_test3,
-         shared_locks_asynchroneous_test4,
-         different_key_types_test1,
-         locks_and_exclusive_locks_together_test1
-        ].
+    single_dc_sl_test1,
+    single_dc_sl_test2,
+    lock_already_exclusive_test1,
+    lock_already_exclusive_test2,
+    lock_already_exclusive_test3,
+    lock_already_shared_test1,
+    lock_already_shared_test2,
+    lock_already_shared_test3,
+    lock_shared_and_exclusive_test1,
+    lock_shared_and_exclusive_test2,
+    lock_shared_and_exclusive_test3,
+    lock_shared_and_exclusive_test4,
+    lock_acquisition_in_sequence_test1,
+    lock_acquisition_in_sequence_test2,
+    shared_locks_acquisition_in_sequence_test1,
+    shared_locks_acquisition_in_sequence_test2,
+    shared_locks_asynchroneous_test1,
+    shared_locks_asynchroneous_test2,
+    shared_locks_asynchroneous_test3,
+    shared_locks_asynchroneous_test4,
+    different_key_types_test1,
+    locks_and_exclusive_locks_together_test1
+].
 % One dc (leader) tries to get the shared lock of a new lock
 single_dc_sl_test1(Config) ->
     [Node1 | _Nodes] = proplists:get_value(nodes, Config),
@@ -169,7 +169,7 @@ lock_already_exclusive_test3(Config) ->
     Keys =[lock_already_exclusive_test3_key_1],
     {ok, TxId1} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     Lock_Info1 = rpc:call(Node3, lock_mgr_es, local_locks_info, []),
-    
+
     {error,{error,{Keys,[]}}} = rpc:call(Node2, antidote, start_transaction, [ignore, [{shared_locks,Keys}]]),
     {ok, _Clock} = rpc:call(Node3, antidote, commit_transaction, [TxId1]),
     % checks if all locks are released
@@ -183,7 +183,7 @@ lock_already_shared_test1(Config) ->
     Keys =[lock_already_shared_test1_key_1],
     {ok, TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{shared_locks,Keys}]]),
     Lock_Info1 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
-    
+
     {error,{error,{[],[{TxId1,Missing_Keys0}]}}} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     Missing_Keys0=Keys,
     {ok, _Clock} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
@@ -199,7 +199,7 @@ lock_already_shared_test2(Config) ->
     Keys =[lock_already_shared_test2_key_1],
     {ok, TxId1} = rpc:call(Node2, antidote, start_transaction, [ignore, [{shared_locks,Keys}]]),
     Lock_Info1 = rpc:call(Node2, lock_mgr_es, local_locks_info, []),
-    
+
     {error,{error,{[],[{TxId1,Missing_Keys0}]}}} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     Missing_Keys0=Keys,
     {ok, _Clock} = rpc:call(Node2, antidote, commit_transaction, [TxId1]),
@@ -214,7 +214,7 @@ lock_already_shared_test3(Config) ->
     Keys =[lock_already_shared_test3_key_1],
     {ok, TxId1} = rpc:call(Node2, antidote, start_transaction, [ignore, [{shared_locks,Keys}]]),
     Lock_Info1 = rpc:call(Node2, lock_mgr_es, local_locks_info, []),
-    
+
     {error,{error,{[],Keys}}} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     {ok, _Clock} = rpc:call(Node2, antidote, commit_transaction, [TxId1]),
     % checks if all locks are released
@@ -228,7 +228,7 @@ lock_shared_and_exclusive_test1(Config)->
     Keys =[lock_shared_and_exclusive_test1_key_1],
     {ok, TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{shared_locks,Keys},{exclusive_locks,Keys}]]),
     Lock_Info1 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
-    
+
     {ok, _Clock} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
     % checks if all locks are released
     Lock_Info2 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
@@ -241,7 +241,7 @@ lock_shared_and_exclusive_test2(Config)->
     Keys =[lock_shared_and_exclusive_test2_key_1],
     {ok, TxId1} = rpc:call(Node2, antidote, start_transaction, [ignore, [{shared_locks,Keys},{exclusive_locks,Keys}]]),
     Lock_Info1 = rpc:call(Node2, lock_mgr_es, local_locks_info, []),
-    
+
     {ok, _Clock} = rpc:call(Node2, antidote, commit_transaction, [TxId1]),
     % checks if all locks are released
     Lock_Info2 = rpc:call(Node2, lock_mgr_es, local_locks_info, []),
@@ -255,7 +255,7 @@ lock_shared_and_exclusive_test3(Config)->
     Keys2 =[lock_shared_and_exclusive_test3_key_1,lock_shared_and_exclusive_test3_key_2,lock_shared_and_exclusive_test3_key_5,lock_shared_and_exclusive_test3_key_6],
     {ok, TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{shared_locks,Keys1},{exclusive_locks,Keys2}]]),
     Lock_Info1 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
-    
+
     {ok, _Clock} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
     % checks if all locks are released
     Lock_Info2 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
@@ -269,7 +269,7 @@ lock_shared_and_exclusive_test4(Config)->
     Keys2 =[lock_shared_and_exclusive_test3_key_1,lock_shared_and_exclusive_test3_key_2,lock_shared_and_exclusive_test3_key_5,lock_shared_and_exclusive_test3_key_6],
     {ok, TxId1} = rpc:call(Node2, antidote, start_transaction, [ignore, [{shared_locks,Keys1},{exclusive_locks,Keys2}]]),
     Lock_Info1 = rpc:call(Node2, lock_mgr_es, local_locks_info, []),
-    
+
     {ok, _Clock} = rpc:call(Node2, antidote, commit_transaction, [TxId1]),
     % checks if all locks are released
     Lock_Info2 = rpc:call(Node2, lock_mgr_es, local_locks_info, []),
@@ -293,17 +293,17 @@ lock_acquisition_in_sequence_test2(Config) ->
     Shared_Locks1 = [lock_acquisition_in_sequence_test2_key_5,lock_acquisition_in_sequence_test2_key_6,lock_acquisition_in_sequence_test2_key_7,lock_acquisition_in_sequence_test2_key_8],
     Shared_Locks2 = [lock_acquisition_in_sequence_test2_key_5,lock_acquisition_in_sequence_test2_key_6,lock_acquisition_in_sequence_test2_key_8],
     Shared_Locks3 = [lock_acquisition_in_sequence_test2_key_6,lock_acquisition_in_sequence_test2_key_7],
-    
+
     DC_Sequence = [{Node2,1},{Node3,1},{Node3,2},{Node2,1},{Node1,3},{Node3,3},{Node1,3},{Node2,1},{Node2,2},{Node3,1},{Node1,2},{Node1,3},{Node2,2}],
     lists:foreach(fun({Node,Locks})-> case Locks of
-                                         1 ->
-                                            lock_get_and_release_helper(Node,Shared_Locks1,Exclusive_Locks1,0);
-                                         2 ->
-                                            lock_get_and_release_helper(Node,Shared_Locks2,Exclusive_Locks2,0);
-                                         3 ->
-                                            lock_get_and_release_helper(Node,Shared_Locks3,Exclusive_Locks3,0)
-                                         end
-                                     end,DC_Sequence).
+        1 ->
+            lock_get_and_release_helper(Node,Shared_Locks1,Exclusive_Locks1,0);
+        2 ->
+            lock_get_and_release_helper(Node,Shared_Locks2,Exclusive_Locks2,0);
+        3 ->
+            lock_get_and_release_helper(Node,Shared_Locks3,Exclusive_Locks3,0)
+    end
+    end,DC_Sequence).
 
 %Multiple dcs acquire and release a set of shared locks in a predefined order
 shared_locks_acquisition_in_sequence_test1(Config)->
@@ -320,14 +320,14 @@ shared_locks_acquisition_in_sequence_test2(Config)->
     Shared_Locks3 = [shared_locks_acquisition_in_sequence_test2_key_1,shared_locks_acquisition_in_sequence_test2_key_3,shared_locks_acquisition_in_sequence_test2_key_4,shared_locks_acquisition_in_sequence_test2_key_5],
     DC_Sequence = [{Node2,1},{Node3,1},{Node3,2},{Node2,1},{Node1,3},{Node3,3},{Node1,3},{Node2,1},{Node2,2},{Node3,1},{Node1,2},{Node1,3},{Node2,2}],
     lists:foreach(fun({Node,Locks})-> case Locks of
-                                         1 ->
-                                            lock_get_and_release_helper(Node,Shared_Locks1,[],0);
-                                         2 ->
-                                            lock_get_and_release_helper(Node,Shared_Locks2,[],0);
-                                         3 ->
-                                            lock_get_and_release_helper(Node,Shared_Locks3,[],0)
-                                         end
-                                     end,DC_Sequence).
+        1 ->
+            lock_get_and_release_helper(Node,Shared_Locks1,[],0);
+        2 ->
+            lock_get_and_release_helper(Node,Shared_Locks2,[],0);
+        3 ->
+            lock_get_and_release_helper(Node,Shared_Locks3,[],0)
+    end
+    end,DC_Sequence).
 
 %Multiple dcs try to get the same shared locks asynchroneously once
 shared_locks_asynchroneous_test1(Config) ->
@@ -476,8 +476,8 @@ different_key_types_test1(Config) ->
     {ok, _Clock6} = rpc:call(Node2, antidote, commit_transaction, [TxId6]),
     {ok, _Clock7} = rpc:call(Node2, antidote, commit_transaction, [TxId7]),
     {ok, _Clock8} = rpc:call(Node1, antidote, commit_transaction, [TxId8]).
-    
-    
+
+
 % Tests if exclusive locks and regular locks can be acquired at the same time.
 locks_and_exclusive_locks_together_test1(Config) ->
     [Node1, Node2,Node3 | _Nodes] = proplists:get_value(nodes, Config),
@@ -534,7 +534,7 @@ transaction_asynchroneous_helper2(Node,Shared_Locks,Exclusive_Locks,Retries,Call
             transaction_asynchroneous_helper2(Node,Shared_Locks,Exclusive_Locks,Retries-1,Caller,Id)
     end.
 transaction_asynchroneous_helper3(Id)->
-    receive 
+    receive
         {ok,Id}->ok;
         {error,Error_Msg,Id} -> Msg = atom_to_list(Error_Msg),?assertError(Msg,false)
     after 300000 -> ?assertError("The test case took too long and was timed out",false)

@@ -23,35 +23,35 @@
 
 %% common_test callbacks
 -export([init_per_suite/1,
-         end_per_suite/1,
-         init_per_testcase/2,
-         end_per_testcase/2,
-         all/0]).
+    end_per_suite/1,
+    init_per_testcase/2,
+    end_per_testcase/2,
+    all/0]).
 
 %% tests
 -export([simple_transaction_tests_with_locks/1,
-        locks_in_sequence_check/1,
-        locks_required_by_another_transaction/1,
-         lock_acquisition_test/1,
-         some_test/1,
-         get_lock_owned_by_other_dc_1/1,
-         get_lock_owned_by_other_dc_2/1,
-         multi_value_register_test/1,
-         asynchronous_test_1/1,
-         asynchronous_test_2/1,
-         asynchronous_test_3/1,
-         asynchronous_test_4/1,
-         asynchronous_test_5/1,
-         a_lot_of_locks_per_transaction_1/1,
-         a_lot_of_locks_per_transaction_2/1,
-         cluster_failure_test_1/1,
-         cluster_failure_test_2/1
-        ]).
+    locks_in_sequence_check/1,
+    locks_required_by_another_transaction/1,
+    lock_acquisition_test/1,
+    some_test/1,
+    get_lock_owned_by_other_dc_1/1,
+    get_lock_owned_by_other_dc_2/1,
+    multi_value_register_test/1,
+    asynchronous_test_1/1,
+    asynchronous_test_2/1,
+    asynchronous_test_3/1,
+    asynchronous_test_4/1,
+    asynchronous_test_5/1,
+    a_lot_of_locks_per_transaction_1/1,
+    a_lot_of_locks_per_transaction_2/1,
+    cluster_failure_test_1/1,
+    cluster_failure_test_2/1
+]).
 %% test helper funktions
 -export([
-         asynchronous_test_helper/8,
-         asynchronous_test_helper2/8
-         ]).
+    asynchronous_test_helper/8,
+    asynchronous_test_helper2/8
+]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -80,23 +80,23 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-         simple_transaction_tests_with_locks,
-         locks_in_sequence_check,
-         locks_required_by_another_transaction,
-         lock_acquisition_test,
-         some_test,
-         get_lock_owned_by_other_dc_2,
-         multi_value_register_test,
-         asynchronous_test_1,
-         asynchronous_test_2,
-         asynchronous_test_3,
-         asynchronous_test_4,
-         asynchronous_test_5,
-         a_lot_of_locks_per_transaction_1,
-         a_lot_of_locks_per_transaction_2%,
-         %cluster_failure_test_1,
-         %cluster_failure_test_2
-        ].
+    simple_transaction_tests_with_locks,
+    locks_in_sequence_check,
+    locks_required_by_another_transaction,
+    lock_acquisition_test,
+    some_test,
+    get_lock_owned_by_other_dc_2,
+    multi_value_register_test,
+    asynchronous_test_1,
+    asynchronous_test_2,
+    asynchronous_test_3,
+    asynchronous_test_4,
+    asynchronous_test_5,
+    a_lot_of_locks_per_transaction_1,
+    a_lot_of_locks_per_transaction_2%,
+    %cluster_failure_test_1,
+    %cluster_failure_test_2
+].
 
 %% Checks if a transaction on the leading(may create new locks) node can aquire never used
 %% locks, do some updates and then releases them when the transaction is committed
@@ -108,12 +108,12 @@ simple_transaction_tests_with_locks(Config) ->
     Keys = [es_lock1, es_lock2, es_lock3, es_lock4],
     IncValues = [1, 2, 3, 4],
     Objects = lists:map(fun(Key) ->
-                                {Key, Type, Bucket}
-                        end, Keys
-                       ),
+        {Key, Type, Bucket}
+    end, Keys
+    ),
     Updates = lists:map(fun({Object, IncVal}) ->
-                                {Object, increment, IncVal}
-                        end, lists:zip(Objects, IncValues)),
+        {Object, increment, IncVal}
+    end, lists:zip(Objects, IncValues)),
     {ok, TxId} = rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     %% update objects one by one.
     txn_seq_update_check(Node, TxId, Updates),
@@ -138,24 +138,24 @@ locks_in_sequence_check(Config) ->
     {ok, TxId} = rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     Lock_Info1 = rpc:call(Node, lock_mgr_es, local_locks_info, []),
     {_,{using,[],Used_Keys}} = lists:keyfind(TxId,1,Lock_Info1),
-    
+
     {error,{error,{[{TxId,Missing_Keys}],[]}}} = rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-    
+
     Type = antidote_crdt_counter_pn,
     Bucket = antidote_bucket,
     IncValues = [1, 2, 3, 4],
     Objects = lists:map(fun(Key) ->
-                                {Key, Type, Bucket}
-                        end, Keys
-                       ),
+        {Key, Type, Bucket}
+    end, Keys
+    ),
     Updates = lists:map(fun({Object, IncVal}) ->
-                                {Object, increment, IncVal}
-                        end, lists:zip(Objects, IncValues)),
+        {Object, increment, IncVal}
+    end, lists:zip(Objects, IncValues)),
     %% update objects one by one.
     txn_seq_update_check(Node, TxId, Updates),
     %% read objects one by one
     txn_seq_read_check(Node, TxId, Objects, [1, 2, 3, 4]),
-    {ok, Clock} = rpc:call(Node, antidote, commit_transaction, [TxId]), 
+    {ok, Clock} = rpc:call(Node, antidote, commit_transaction, [TxId]),
     {ok, TxId2} = rpc:call(Node, antidote, start_transaction, [Clock, []]),
     %% read objects all at once
     {ok, _Res} = rpc:call(Node, antidote, read_objects, [Objects, TxId2]),
@@ -180,12 +180,12 @@ locks_required_by_another_transaction(Config) ->
     {ok, TxId} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     Lock_Info1 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
     {_,{using,[],Used_Keys}} = lists:keyfind(TxId,1,Lock_Info1),
-    
+
     % Test if transaction requiring the used keys can not start a transaction
     {error,{error,{[{TxId,Missing_Keys0}],[]}}} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     {error,{error,{[],Missing_Keys2}}} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,[hd(tl(Keys))]}]]),%TODO Error in testcase -- lock_mgr_es says ok instead of an error....
     {error,{error,{[],Missing_Keys3}}} = rpc:call(Node4, antidote, start_transaction, [ignore, [{exclusive_locks,tl(Keys)}]]),
-    
+
     {ok, _Clock} = rpc:call(Node1, antidote, commit_transaction, [TxId]),
     Lock_Info2 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
     false = lists:keyfind(TxId,1,Lock_Info2),
@@ -236,7 +236,7 @@ get_lock_owned_by_other_dc_1(Config) ->
     Node3 = hd(hd(tl(Nodes))),
     Node4 = hd(hd(tl(tl(Nodes)))),
     Keys = [es_lock31, es_lock32, es_lock33, es_lock34],
-    
+
     {ok, TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     Lock_Info1 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
     {_,{using,[],Used_Keys1}} = lists:keyfind(TxId1,1,Lock_Info1),
@@ -271,7 +271,7 @@ get_lock_owned_by_other_dc_2(Config) ->
 %% Helper function for get_lock_owned_by_other_dc_2
 helper_do_lock_requests([],_)-> ok;
 helper_do_lock_requests([Current_Node | Remaining_Nodes],Keys)->
-    case rpc:call(Current_Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of 
+    case rpc:call(Current_Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
             Lock_Info1 = rpc:call(Current_Node, lock_mgr_es, local_locks_info, []),
             {_,{using,[],Used_Keys1}} = lists:keyfind(TxId1,1,Lock_Info1),
@@ -294,12 +294,12 @@ multi_value_register_test(Config) ->
     Key = es_multi_value_register,
     Bound_object = {Key, antidote_crdt_register_mv, antidote_bucket},
     Updates_List=[{[[]],Node1,<<"n1">>},{<<"n1">>,Node3,<<"x2">>},{<<"x2">>,Node3,<<"x3">>},{<<"x3">>,Node4,<<"y4">>},{<<"y4">>,Node1,<<"n5">>}
-                    ,{<<"n5">>,Node1,<<"n6">>},{<<"n6">>,Node4,<<"y7">>},{<<"y7">>,Node1,<<"n8">>},{<<"n8">>,Node3,<<"x9">>},{<<"x9">>,Node4,<<"y10">>}],
+        ,{<<"n5">>,Node1,<<"n6">>},{<<"n6">>,Node4,<<"y7">>},{<<"y7">>,Node1,<<"n8">>},{<<"n8">>,Node3,<<"x9">>},{<<"x9">>,Node4,<<"y10">>}],
     helper_multi_value_register_test(Updates_List,[Key],Bound_object).
 %% helper functin for multi_value_register_test
 helper_multi_value_register_test([],_,_)-> ok;
 helper_multi_value_register_test([{Value1,Current_Node,Value2} | Remaining_Nodes],Keys,Object)->
-    case rpc:call(Current_Node, cure, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of 
+    case rpc:call(Current_Node, cure, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
             case Value2 of
                 <<"n1">> ->
@@ -312,11 +312,11 @@ helper_multi_value_register_test([{Value1,Current_Node,Value2} | Remaining_Nodes
                     {ok, _Clock1} = rpc:call(Current_Node, cure, commit_transaction, [TxId1]),
                     ?assertEqual(Value1,Read_Val),
                     helper_multi_value_register_test(Remaining_Nodes, Keys, Object)
-                    
+
             end;
         {error,{error,_Missing_Locks}} ->
             helper_multi_value_register_test([{Value1,Current_Node,Value2} | Remaining_Nodes], Keys,Object)
-    end.    
+    end.
 %helper_multi_value_register_test([],_,_,_)-> ok;
 %helper_multi_value_register_test([{Value1,Current_Node,Value2} | Remaining_Nodes],Keys,Object,Snapshot)->
 %    case rpc:call(Current_Node, cure, start_transaction, [Snapshot, [{exclusive_locks,Keys}]]) of 
@@ -353,32 +353,32 @@ asynchronous_test_1(Config) ->
                 {done,Node2,2,_Clocks2} ->
 
                     receive
-                            {done,Node3,3,_Clocks3} ->
+                        {done,Node3,3,_Clocks3} ->
 
-                                {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
-                                {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
-                                {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
-                                {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
-                                {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
-                                {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
-                                {ok, [Res1]} = Res_11,
-                                {ok, [Res2]} = Res_22,
-                                {ok, [Res3]} = Res_33,
-                                ?assertEqual(300,Res2),
-                                ?assertEqual(300,Res1),
-                                ?assertEqual(300,Res3)
-                                
-                        after 300000 -> ?assertError("The test case took too long and was timed out",false)
-                        end
+                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
+                            {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
+                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
+                            {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
+                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
+                            {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
+                            {ok, [Res1]} = Res_11,
+                            {ok, [Res2]} = Res_22,
+                            {ok, [Res3]} = Res_33,
+                            ?assertEqual(300,Res2),
+                            ?assertEqual(300,Res1),
+                            ?assertEqual(300,Res3)
+
+                    after 300000 -> ?assertError("The test case took too long and was timed out",false)
+                    end
             after 300000 -> ?assertError("The test case took too long and was timed out",false)
             end
     after 300000 -> ?assertError("The test case took too long and was timed out",false)
     end.
-    
-    
+
+
 
 
 
@@ -402,25 +402,25 @@ asynchronous_test_2(Config) ->
                 {done,Node2,2,_Clocks2} ->
 
                     receive
-                            {done,Node3,3,_Clocks3} ->
+                        {done,Node3,3,_Clocks3} ->
 
-                                {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
-                                {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
-                                {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
-                                {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
-                                {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
-                                {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
-                                {ok, [Res1]} = Res_11,
-                                {ok, [Res2]} = Res_22,
-                                {ok, [Res3]} = Res_33,
-                                ?assertEqual(300,Res2),
-                                ?assertEqual(300,Res1),
-                                ?assertEqual(300,Res3)
-                        after 300000 -> ?assertError("The test case took too long and was timed out",false)
-                        end
+                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
+                            {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
+                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
+                            {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
+                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
+                            {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
+                            {ok, [Res1]} = Res_11,
+                            {ok, [Res2]} = Res_22,
+                            {ok, [Res3]} = Res_33,
+                            ?assertEqual(300,Res2),
+                            ?assertEqual(300,Res1),
+                            ?assertEqual(300,Res3)
+                    after 300000 -> ?assertError("The test case took too long and was timed out",false)
+                    end
             after 300000 -> ?assertError("The test case took too long and was timed out",false)
             end
     after 300000 -> ?assertError("The test case took too long and was timed out",false)
@@ -428,9 +428,9 @@ asynchronous_test_2(Config) ->
 
 asynchronous_test_helper(Node,_,_,0,Clocks,Caller,_,Id)->
     Caller ! {done,Node,Id,Clocks};
-    
+
 asynchronous_test_helper(Node,Keys,Object,Increments,Clocks,Caller,Delay,Id)->
-    case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of 
+    case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
             ok = rpc:call(Node, antidote, update_objects,[[{Object, increment, 1}],TxId1]),
             {ok, Clock1} = rpc:call(Node, antidote, commit_transaction, [TxId1]),
@@ -462,26 +462,26 @@ asynchronous_test_3(Config) ->
                 {done,Node2,2,_Clocks2} ->
 
                     receive
-                            {done,Node3,3,_Clocks3} ->
+                        {done,Node3,3,_Clocks3} ->
 
-                                {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
-                                {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
-                                {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
-                                {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
-                                {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
-                                {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
-                                {ok, [[Res1]|[]]}  = Res_11,
-                                {ok, [[Res2]|[]]}  = Res_22,
-                                {ok, [[Res3]|[]]}  = Res_33,
-                                ?assertEqual(300,Res2),
-                                ?assertEqual(300,Res1),
-                                ?assertEqual(300,Res3)
+                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
+                            {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
+                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
+                            {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
+                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
+                            {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
+                            {ok, [[Res1]|[]]}  = Res_11,
+                            {ok, [[Res2]|[]]}  = Res_22,
+                            {ok, [[Res3]|[]]}  = Res_33,
+                            ?assertEqual(300,Res2),
+                            ?assertEqual(300,Res1),
+                            ?assertEqual(300,Res3)
 
-                        after 300000 -> ?assertError("The test case took too long and was timed out",false)
-                        end
+                    after 300000 -> ?assertError("The test case took too long and was timed out",false)
+                    end
             after 300000 -> ?assertError("The test case took too long and was timed out",false)
             end
     after 300000 -> ?assertError("The test case took too long and was timed out",false)
@@ -509,25 +509,25 @@ asynchronous_test_4(Config) ->
                 {done,Node2,2,_Clocks2} ->
 
                     receive
-                            {done,Node3,3,_Clocks3} ->
+                        {done,Node3,3,_Clocks3} ->
 
-                                {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
-                                {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
-                                {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
-                                {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
-                                {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-                                Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
-                                {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
-                                {ok, [[Res1]|[]]}  = Res_11,
-                                {ok, [[Res2]|[]]}  = Res_22,
-                                {ok, [[Res3]|[]]}  = Res_33,
-                                ?assertEqual(300,Res2),
-                                ?assertEqual(300,Res1),
-                                ?assertEqual(300,Res3)
-                        after 300000 -> ?assertError("The test case took too long and was timed out",false)
-                        end
+                            {ok,TxId1} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_11 = rpc:call(Node1, antidote, read_objects, [[Object],TxId1]),
+                            {ok, _} = rpc:call(Node1, antidote, commit_transaction, [TxId1]),
+                            {ok,TxId2} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_22 = rpc:call(Node2, antidote, read_objects, [[Object],TxId2]),
+                            {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2]),
+                            {ok,TxId3} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+                            Res_33 = rpc:call(Node3, antidote, read_objects, [[Object],TxId3]),
+                            {ok, _} = rpc:call(Node3, antidote, commit_transaction, [TxId3]),
+                            {ok, [[Res1]|[]]}  = Res_11,
+                            {ok, [[Res2]|[]]}  = Res_22,
+                            {ok, [[Res3]|[]]}  = Res_33,
+                            ?assertEqual(300,Res2),
+                            ?assertEqual(300,Res1),
+                            ?assertEqual(300,Res3)
+                    after 300000 -> ?assertError("The test case took too long and was timed out",false)
+                    end
             after 300000 -> ?assertError("The test case took too long and was timed out",false)
             end
     after 300000 -> ?assertError("The test case took too long and was timed out",false)
@@ -537,15 +537,15 @@ asynchronous_test_4(Config) ->
 
 asynchronous_test_helper2(Node,_,_,0,Clocks,Caller,_,Id)->
     Caller ! {done,Node,Id,Clocks};
-    
+
 asynchronous_test_helper2(Node,Keys,Object,Increments,Clocks,Caller,Delay,Id)->
-    case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of 
+    case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
             {ok, Res} = rpc:call(Node, antidote, read_objects, [[Object],TxId1]),
             case Res of
                 [[]] ->
                     ok = rpc:call(Node, antidote, update_objects,[[{Object, assign, 1}],TxId1]);
-                [[Res2]|[]] -> 
+                [[Res2]|[]] ->
                     ok = rpc:call(Node, antidote, update_objects,[[{Object, assign, Res2+1}],TxId1])
             end,
             {ok, Clock1} = rpc:call(Node, antidote, commit_transaction, [TxId1]),
@@ -626,22 +626,22 @@ helper_receive_result({Node1,Id1},{Node2,Id2},{Node3,Id3},_Info) ->
             end
     after 300000 -> ?assertError("The test case took too long and was timed out",false)
     end.
-    
 
-    
+
+
 
 
 
 helper_check_result1(Node,Keys,Object,Value) ->
     case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
-        {ok,TxId} -> 
+        {ok,TxId} ->
             {ok, [Res]} = rpc:call(Node, antidote, read_objects, [[Object],TxId]),
             {ok, _} = rpc:call(Node, antidote, commit_transaction, [TxId]),
             ?assertEqual(Value,Res);
         {error,_} ->
             helper_check_result1(Node, Keys, Object, Value)
     end.
-        
+
 helper_check_result2(Node,Keys,Object,Value) ->
     case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok,TxId} ->
@@ -793,15 +793,15 @@ some_test(Config) ->
 
 txn_seq_read_check(Node, TxId, Objects, ExpectedValues) ->
     lists:map(fun({Object, Expected}) ->
-                      {ok, [Val]} = rpc:call(Node, antidote, read_objects, [[Object], TxId]),
-                      ?assertEqual(Expected, Val)
-              end, lists:zip(Objects, ExpectedValues)).
+        {ok, [Val]} = rpc:call(Node, antidote, read_objects, [[Object], TxId]),
+        ?assertEqual(Expected, Val)
+    end, lists:zip(Objects, ExpectedValues)).
 
 txn_seq_update_check(Node, TxId, Updates) ->
     lists:map(fun(Update) ->
-                      Res = rpc:call(Node, antidote, update_objects, [[Update], TxId]),
-                      ?assertMatch(ok, Res)
-              end, Updates).
+        Res = rpc:call(Node, antidote, update_objects, [[Update], TxId]),
+        ?assertMatch(ok, Res)
+    end, Updates).
 
 
 

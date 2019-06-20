@@ -23,97 +23,97 @@
 
 %% common_test callbacks
 -export([%% suite/0,
-         init_per_suite/1,
-         end_per_suite/1,
-         init_per_testcase/2,
-         end_per_testcase/2,
-         all/0]).
+    init_per_suite/1,
+    end_per_suite/1,
+    init_per_testcase/2,
+    end_per_testcase/2,
+    all/0]).
 
 %% tests
 -export([
-        kram/1,
-        kram2/1,
-        lock_pb_test1/1,
-        lock_pb_test2/1,
-        lock_pb_test3/1,
-        lock_pb_combination_test1/1,
-        lock_pb_combination_test2/1,
-        lock_pb_combination_test3/1,
-        lock_pb_combination_test4/1,
-        lock_pb_combination_test5/1,
-        lock_pb_combination_test6/1,
-        lock_pb_combination_test7/1,
-        lock_pb_combination_test8/1,
-        lock_pb_combination_test9/1,
-        lock_pb_combination_test10/1,
-        lock_pb_not_leader_dc_test1/1,
-        lock_pb_not_leader_dc_test2/1,
-        lock_pb_not_leader_dc_test3/1,
-        internal_data_test1/1,
-        internal_data_test2/1,
-        internal_data_test3/1,
-        internal_data_test4/1,
-        locks_speed_test1/1,
-        locks_speed_test2/1,
-        locks_speed_test3/1,
-        locks_speed_test4/1,
-        locks_speed_test5/1,
-        locks_speed_test6/1,
-        locks_speed_test7/1,
-        locks_speed_test8/1,
-        locks_speed_test9/1,
-        locks_speed_test10/1,
-        locks_speed_test11/1,
-        locks_speed_test12/1,
-        transaction_locks_speed_test1/1,
-        transaction_locks_speed_test2/1,
-        transaction_locks_speed_test3/1,
-        transaction_locks_speed_test4/1,
-        transaction_locks_speed_test5/1,
-        transaction_locks_speed_test6/1,
-        transaction_locks_speed_test7/1,
-        transaction_locks_speed_test8/1,
-        transaction_locks_speed_test9/1,
-        transaction_locks_speed_test10/1,
-        transaction_locks_speed_test11/1,
-        transaction_locks_speed_test12/1,
-        pb_locks_speed_test1/1,
-        pb_locks_speed_test2/1,
-        pb_locks_speed_test3/1,
-        pb_locks_speed_test4/1,
-        pb_locks_speed_test5/1,
-        pb_locks_speed_test6/1,
-        pb_locks_speed_test7/1,
-        pb_locks_speed_test8/1,
-        pb_locks_speed_test9/1,
-        pb_locks_speed_test10/1,
-        pb_locks_speed_test11/1,
-        pb_locks_speed_test12/1,
-        transaction_locks_other_node_speed_test1/1,
-        transaction_locks_other_node_speed_test2/1,
-        transaction_locks_other_node_speed_test3/1,
-        transaction_locks_other_node_speed_test4/1,
-        transaction_locks_other_node_speed_test5/1,
-        transaction_locks_other_node_speed_test6/1,
-        transaction_locks_other_node_speed_test7/1,
-        transaction_locks_other_node_speed_test8/1,
-        transaction_locks_other_node_speed_test9/1,
-        transaction_locks_other_node_speed_test10/1,
-        transaction_locks_other_node_speed_test11/1,
-        transaction_locks_other_node_speed_test12/1,
-        pb_locks_other_node_speed_test1/1,
-        pb_locks_other_node_speed_test2/1,
-        pb_locks_other_node_speed_test3/1,
-        pb_locks_other_node_speed_test4/1,
-        pb_locks_other_node_speed_test5/1,
-        pb_locks_other_node_speed_test6/1,
-        pb_locks_other_node_speed_test7/1,
-        pb_locks_other_node_speed_test8/1,
-        pb_locks_other_node_speed_test9/1,
-        pb_locks_other_node_speed_test10/1,
-        pb_locks_other_node_speed_test11/1,
-        pb_locks_other_node_speed_test12/1
-        ]).
+    kram/1,
+    kram2/1,
+    lock_pb_test1/1,
+    lock_pb_test2/1,
+    lock_pb_test3/1,
+    lock_pb_combination_test1/1,
+    lock_pb_combination_test2/1,
+    lock_pb_combination_test3/1,
+    lock_pb_combination_test4/1,
+    lock_pb_combination_test5/1,
+    lock_pb_combination_test6/1,
+    lock_pb_combination_test7/1,
+    lock_pb_combination_test8/1,
+    lock_pb_combination_test9/1,
+    lock_pb_combination_test10/1,
+    lock_pb_not_leader_dc_test1/1,
+    lock_pb_not_leader_dc_test2/1,
+    lock_pb_not_leader_dc_test3/1,
+    internal_data_test1/1,
+    internal_data_test2/1,
+    internal_data_test3/1,
+    internal_data_test4/1,
+    locks_speed_test1/1,
+    locks_speed_test2/1,
+    locks_speed_test3/1,
+    locks_speed_test4/1,
+    locks_speed_test5/1,
+    locks_speed_test6/1,
+    locks_speed_test7/1,
+    locks_speed_test8/1,
+    locks_speed_test9/1,
+    locks_speed_test10/1,
+    locks_speed_test11/1,
+    locks_speed_test12/1,
+    transaction_locks_speed_test1/1,
+    transaction_locks_speed_test2/1,
+    transaction_locks_speed_test3/1,
+    transaction_locks_speed_test4/1,
+    transaction_locks_speed_test5/1,
+    transaction_locks_speed_test6/1,
+    transaction_locks_speed_test7/1,
+    transaction_locks_speed_test8/1,
+    transaction_locks_speed_test9/1,
+    transaction_locks_speed_test10/1,
+    transaction_locks_speed_test11/1,
+    transaction_locks_speed_test12/1,
+    pb_locks_speed_test1/1,
+    pb_locks_speed_test2/1,
+    pb_locks_speed_test3/1,
+    pb_locks_speed_test4/1,
+    pb_locks_speed_test5/1,
+    pb_locks_speed_test6/1,
+    pb_locks_speed_test7/1,
+    pb_locks_speed_test8/1,
+    pb_locks_speed_test9/1,
+    pb_locks_speed_test10/1,
+    pb_locks_speed_test11/1,
+    pb_locks_speed_test12/1,
+    transaction_locks_other_node_speed_test1/1,
+    transaction_locks_other_node_speed_test2/1,
+    transaction_locks_other_node_speed_test3/1,
+    transaction_locks_other_node_speed_test4/1,
+    transaction_locks_other_node_speed_test5/1,
+    transaction_locks_other_node_speed_test6/1,
+    transaction_locks_other_node_speed_test7/1,
+    transaction_locks_other_node_speed_test8/1,
+    transaction_locks_other_node_speed_test9/1,
+    transaction_locks_other_node_speed_test10/1,
+    transaction_locks_other_node_speed_test11/1,
+    transaction_locks_other_node_speed_test12/1,
+    pb_locks_other_node_speed_test1/1,
+    pb_locks_other_node_speed_test2/1,
+    pb_locks_other_node_speed_test3/1,
+    pb_locks_other_node_speed_test4/1,
+    pb_locks_other_node_speed_test5/1,
+    pb_locks_other_node_speed_test6/1,
+    pb_locks_other_node_speed_test7/1,
+    pb_locks_other_node_speed_test8/1,
+    pb_locks_other_node_speed_test9/1,
+    pb_locks_other_node_speed_test10/1,
+    pb_locks_other_node_speed_test11/1,
+    pb_locks_other_node_speed_test12/1
+]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -146,77 +146,77 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-        kram,
-        kram2,
-        lock_pb_test1,
-        lock_pb_test2,
-        lock_pb_test3,
-        lock_pb_combination_test1,
-        lock_pb_combination_test2,
-        lock_pb_combination_test3,
-        lock_pb_combination_test4,
-        lock_pb_combination_test5,
-        lock_pb_combination_test6,
-        lock_pb_combination_test7,
-        lock_pb_combination_test8,
-        lock_pb_combination_test9,
-        lock_pb_combination_test10,
-        lock_pb_not_leader_dc_test1,
-        lock_pb_not_leader_dc_test2,
-        lock_pb_not_leader_dc_test3,
-        internal_data_test1,
-        internal_data_test2,
-        internal_data_test3,
-        internal_data_test4,
-        locks_speed_test1,
-        locks_speed_test2,
-        locks_speed_test3,
-        locks_speed_test4,
-        locks_speed_test5,
-        locks_speed_test6,
-        locks_speed_test7,
-        locks_speed_test8,
-        locks_speed_test9,
-        locks_speed_test10,
-        locks_speed_test11,
-        locks_speed_test12,
-        transaction_locks_speed_test1,
-        transaction_locks_speed_test2,
-        transaction_locks_speed_test3,
-        transaction_locks_speed_test4,
-        transaction_locks_speed_test5,
-        transaction_locks_speed_test6,
-        transaction_locks_speed_test7,
-        transaction_locks_speed_test8,
-        transaction_locks_speed_test9,
-        transaction_locks_speed_test10,
-        transaction_locks_speed_test11,
-        transaction_locks_speed_test12,
-        transaction_locks_other_node_speed_test1,
-        transaction_locks_other_node_speed_test2,
-        transaction_locks_other_node_speed_test3,
-        transaction_locks_other_node_speed_test4,
-        transaction_locks_other_node_speed_test5,
-        transaction_locks_other_node_speed_test6,
-        transaction_locks_other_node_speed_test7,
-        transaction_locks_other_node_speed_test8,
-        transaction_locks_other_node_speed_test9,
-        transaction_locks_other_node_speed_test10,
-        transaction_locks_other_node_speed_test11,
-        transaction_locks_other_node_speed_test12,
-        pb_locks_other_node_speed_test1,
-        pb_locks_other_node_speed_test2,
-        pb_locks_other_node_speed_test3,
-        pb_locks_other_node_speed_test4,
-        pb_locks_other_node_speed_test5,
-        pb_locks_other_node_speed_test6,
-        pb_locks_other_node_speed_test7,
-        pb_locks_other_node_speed_test8,
-        pb_locks_other_node_speed_test9,
-        pb_locks_other_node_speed_test10,
-        pb_locks_other_node_speed_test11,
-        pb_locks_other_node_speed_test12
-        ].
+    kram,
+    kram2,
+    lock_pb_test1,
+    lock_pb_test2,
+    lock_pb_test3,
+    lock_pb_combination_test1,
+    lock_pb_combination_test2,
+    lock_pb_combination_test3,
+    lock_pb_combination_test4,
+    lock_pb_combination_test5,
+    lock_pb_combination_test6,
+    lock_pb_combination_test7,
+    lock_pb_combination_test8,
+    lock_pb_combination_test9,
+    lock_pb_combination_test10,
+    lock_pb_not_leader_dc_test1,
+    lock_pb_not_leader_dc_test2,
+    lock_pb_not_leader_dc_test3,
+    internal_data_test1,
+    internal_data_test2,
+    internal_data_test3,
+    internal_data_test4,
+    locks_speed_test1,
+    locks_speed_test2,
+    locks_speed_test3,
+    locks_speed_test4,
+    locks_speed_test5,
+    locks_speed_test6,
+    locks_speed_test7,
+    locks_speed_test8,
+    locks_speed_test9,
+    locks_speed_test10,
+    locks_speed_test11,
+    locks_speed_test12,
+    transaction_locks_speed_test1,
+    transaction_locks_speed_test2,
+    transaction_locks_speed_test3,
+    transaction_locks_speed_test4,
+    transaction_locks_speed_test5,
+    transaction_locks_speed_test6,
+    transaction_locks_speed_test7,
+    transaction_locks_speed_test8,
+    transaction_locks_speed_test9,
+    transaction_locks_speed_test10,
+    transaction_locks_speed_test11,
+    transaction_locks_speed_test12,
+    transaction_locks_other_node_speed_test1,
+    transaction_locks_other_node_speed_test2,
+    transaction_locks_other_node_speed_test3,
+    transaction_locks_other_node_speed_test4,
+    transaction_locks_other_node_speed_test5,
+    transaction_locks_other_node_speed_test6,
+    transaction_locks_other_node_speed_test7,
+    transaction_locks_other_node_speed_test8,
+    transaction_locks_other_node_speed_test9,
+    transaction_locks_other_node_speed_test10,
+    transaction_locks_other_node_speed_test11,
+    transaction_locks_other_node_speed_test12,
+    pb_locks_other_node_speed_test1,
+    pb_locks_other_node_speed_test2,
+    pb_locks_other_node_speed_test3,
+    pb_locks_other_node_speed_test4,
+    pb_locks_other_node_speed_test5,
+    pb_locks_other_node_speed_test6,
+    pb_locks_other_node_speed_test7,
+    pb_locks_other_node_speed_test8,
+    pb_locks_other_node_speed_test9,
+    pb_locks_other_node_speed_test10,
+    pb_locks_other_node_speed_test11,
+    pb_locks_other_node_speed_test12
+].
 
 
 kram(Config)->
@@ -424,9 +424,9 @@ internal_data_test1(Config) ->
     Locks = [<<"internal_data_test1_key1">>,<<"internal_data_test1_key2">>,<<"internal_data_test1_key3">>],
     {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{locks,Locks},{shared_locks,Locks}]),
     Lock_Info1 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
-    
+
     Lock_Info2 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-    
+
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
     [{_,{using,Locks,Locks}}] = Lock_Info1,
@@ -452,9 +452,9 @@ internal_data_test3(Config) ->
     Locks = [<<"internal_data_test3_key1">>,<<"internal_data_test3_key2">>,<<"internal_data_test3_key3">>],
     {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{locks,Locks},{shared_locks,Locks}]),
     Lock_Info1 = rpc:call(Node3, lock_mgr_es, local_locks_info, []),
-    
+
     Lock_Info2 = rpc:call(Node3, lock_mgr, local_locks_info, []),
-    
+
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
     [{_,{using,Locks,Locks}}] = Lock_Info1,
@@ -489,8 +489,8 @@ internal_data_test4(Config) ->
     [] = Lock_Info22,
     [{_,{using,Locks,[]}}] = Lock_Info13,
     [] = Lock_Info23.
-    
-    
+
+
 
 % Tests the speed of the lock_mgr_es function get_locks()
 % While acquiring a single lock
@@ -669,7 +669,7 @@ transaction_locks_speed_test12(Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock
 pb_locks_speed_test1(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test1_key1">>],
     get_locks_helper3(Pid, Locks, []),
@@ -678,7 +678,7 @@ pb_locks_speed_test1(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock
 pb_locks_speed_test2(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test2_key1">>],
     get_locks_helper3(Pid, [], Locks),
@@ -687,7 +687,7 @@ pb_locks_speed_test2(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock
 pb_locks_speed_test3(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test3_key1">>],
     get_locks_helper3(Pid, Locks, Locks),
@@ -696,7 +696,7 @@ pb_locks_speed_test3(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple locks
 pb_locks_speed_test4(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test4_key1">>,<<"pb_locks_speed_test4_key2">>,<<"pb_locks_speed_test4_key3">>,<<"pb_locks_speed_test4_key4">>],
     get_locks_helper3(Pid, Locks, []),
@@ -705,7 +705,7 @@ pb_locks_speed_test4(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple locks
 pb_locks_speed_test5(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test5_key1">>,<<"pb_locks_speed_test5_key2">>,<<"pb_locks_speed_test5_key3">>,<<"pb_locks_speed_test5_key4">>],
     get_locks_helper3(Pid, [], Locks),
@@ -714,7 +714,7 @@ pb_locks_speed_test5(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple locks
 pb_locks_speed_test6(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test6_key1">>,<<"pb_locks_speed_test6_key2">>,<<"pb_locks_speed_test6_key3">>,<<"pb_locks_speed_test6_key4">>],
     get_locks_helper3(Pid, Locks, Locks),
@@ -723,7 +723,7 @@ pb_locks_speed_test6(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock multiple times
 pb_locks_speed_test7(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test7_key1">>],
     multiple_get_locks_helper3(Pid, Locks, [], 99),
@@ -732,7 +732,7 @@ pb_locks_speed_test7(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock multiple times
 pb_locks_speed_test8(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test8_key1">>],
     multiple_get_locks_helper3(Pid, [], Locks, 99),
@@ -741,7 +741,7 @@ pb_locks_speed_test8(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock multiple times
 pb_locks_speed_test9(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test9_key1">>],
     multiple_get_locks_helper3(Pid, Locks, Locks, 99),
@@ -750,7 +750,7 @@ pb_locks_speed_test9(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple lock multiple times
 pb_locks_speed_test10(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test10_key1">>,<<"pb_locks_speed_test10_key2">>,<<"pb_locks_speed_test10_key3">>,<<"pb_locks_speed_test10_key4">>],
     multiple_get_locks_helper3(Pid, Locks, [], 99),
@@ -759,7 +759,7 @@ pb_locks_speed_test10(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple lock multiple times
 pb_locks_speed_test11(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test11_key1">>,<<"pb_locks_speed_test11_key2">>,<<"pb_locks_speed_test11_key3">>,<<"pb_locks_speed_test11_key4">>],
     multiple_get_locks_helper3(Pid, [], Locks, 99),
@@ -768,7 +768,7 @@ pb_locks_speed_test11(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple lock multiple times
 pb_locks_speed_test12(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Locks = [<<"pb_locks_speed_test12_key1">>,<<"pb_locks_speed_test12_key2">>,<<"pb_locks_speed_test12_key3">>,<<"pb_locks_speed_test12_key4">>],
     multiple_get_locks_helper3(Pid, Locks, Locks, 99),
@@ -907,7 +907,7 @@ transaction_locks_other_node_speed_test12(Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock
 pb_locks_other_node_speed_test1(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test1_key1">>],
     get_locks_helper3(Pid, Locks, []),
@@ -916,7 +916,7 @@ pb_locks_other_node_speed_test1(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock
 pb_locks_other_node_speed_test2(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test2_key1">>],
     get_locks_helper3(Pid, [], Locks),
@@ -925,7 +925,7 @@ pb_locks_other_node_speed_test2(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock
 pb_locks_other_node_speed_test3(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test3_key1">>],
     get_locks_helper3(Pid, Locks, Locks),
@@ -934,7 +934,7 @@ pb_locks_other_node_speed_test3(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple locks
 pb_locks_other_node_speed_test4(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test4_key1">>,<<"pb_locks_other_node_speed_test4_key2">>,<<"pb_locks_other_node_speed_test4_key3">>,<<"pb_locks_other_node_speed_test4_key4">>],
     get_locks_helper3(Pid, Locks, []),
@@ -943,7 +943,7 @@ pb_locks_other_node_speed_test4(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple locks
 pb_locks_other_node_speed_test5(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test5_key1">>,<<"pb_locks_other_node_speed_test5_key2">>,<<"pb_locks_other_node_speed_test5_key3">>,<<"pb_locks_other_node_speed_test5_key4">>],
     get_locks_helper3(Pid, [], Locks),
@@ -952,7 +952,7 @@ pb_locks_other_node_speed_test5(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple locks
 pb_locks_other_node_speed_test6(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test6_key1">>,<<"pb_locks_other_node_speed_test6_key2">>,<<"pb_locks_other_node_speed_test6_key3">>,<<"pb_locks_other_node_speed_test6_key4">>],
     get_locks_helper3(Pid, Locks, Locks),
@@ -961,7 +961,7 @@ pb_locks_other_node_speed_test6(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock multiple times
 pb_locks_other_node_speed_test7(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test7_key1">>],
     multiple_get_locks_helper3(Pid, Locks, [], 99),
@@ -970,7 +970,7 @@ pb_locks_other_node_speed_test7(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock multiple times
 pb_locks_other_node_speed_test8(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test8_key1">>],
     multiple_get_locks_helper3(Pid, [], Locks, 99),
@@ -979,7 +979,7 @@ pb_locks_other_node_speed_test8(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring a single lock multiple times
 pb_locks_other_node_speed_test9(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test9_key1">>],
     multiple_get_locks_helper3(Pid, Locks, Locks, 99),
@@ -988,7 +988,7 @@ pb_locks_other_node_speed_test9(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple lock multiple times
 pb_locks_other_node_speed_test10(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test10_key1">>,<<"pb_locks_other_node_speed_test10_key2">>,<<"pb_locks_other_node_speed_test10_key3">>,<<"pb_locks_other_node_speed_test10_key4">>],
     multiple_get_locks_helper3(Pid, Locks, [], 99),
@@ -997,7 +997,7 @@ pb_locks_other_node_speed_test10(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple lock multiple times
 pb_locks_other_node_speed_test11(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test11_key1">>,<<"pb_locks_other_node_speed_test11_key2">>,<<"pb_locks_other_node_speed_test11_key3">>,<<"pb_locks_other_node_speed_test11_key4">>],
     multiple_get_locks_helper3(Pid, [], Locks, 99),
@@ -1006,7 +1006,7 @@ pb_locks_other_node_speed_test11(_Config)->
 % Tests the speed of the lock_mgr_es function get_locks() when using the pb_buffer interface
 % While acquiring multiple lock multiple times
 pb_locks_other_node_speed_test12(_Config)->
-    
+
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Locks = [<<"pb_locks_other_node_speed_test12_key1">>,<<"pb_locks_other_node_speed_test12_key2">>,<<"pb_locks_other_node_speed_test12_key3">>,<<"pb_locks_other_node_speed_test12_key4">>],
     multiple_get_locks_helper3(Pid, Locks, Locks, 99),
