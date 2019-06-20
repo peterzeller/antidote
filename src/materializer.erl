@@ -53,7 +53,7 @@ update_snapshot(Type, Snapshot, Op) ->
     try
         Type:update(Op, Snapshot)
     catch
-        {E, Reason, StackTrace} ->
+        E:Reason:StackTrace ->
             {error, {unexpected_operation, Op, Type, {E, Reason, StackTrace}}}
     end.
 
@@ -149,9 +149,9 @@ materializer_error_invalidupdate_test() ->
     Counter = create_snapshot(Type),
     ?assertEqual(0, Type:value(Counter)),
     Ops = [{non_existing_op_type, {non_existing_op, actor1}}],
-    ?assertEqual({error, {unexpected_operation,
+    ?assertMatch({error, {unexpected_operation,
                     {non_existing_op_type, {non_existing_op, actor1}},
-                    antidote_crdt_counter_pn}},
+                    antidote_crdt_counter_pn, _}},
                  materialize_eager(Type, Counter, Ops)).
 
 %% Testing that the function check_operations works properly

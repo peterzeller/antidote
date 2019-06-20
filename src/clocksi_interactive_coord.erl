@@ -595,8 +595,8 @@ init_state(StayAlive, FullCommit, IsStatic, Properties) ->
 
 
 %% @doc TODO
--spec start_tx_internal(pid(), snapshot_time(), proplists:proplist(), #coord_state{}) -> {ok, #coord_state{}} | {error, any()}.
-start_tx_internal(From, ClientClock, Properties, State = #coord_state{stay_alive = StayAlive, is_static = IsStatic}) ->
+-spec start_tx_internal({pid(), reference()}, snapshot_time(), proplists:proplist(), #coord_state{}) -> {ok, #coord_state{}} | {error, any()}.
+start_tx_internal({From, Ref}, ClientClock, Properties, State = #coord_state{stay_alive = StayAlive, is_static = IsStatic}) ->
     Locks = ordsets:from_list([{Lock, shared} || Lock <- proplists:get_value(shared_locks, Properties, [])]
         ++ [{Lock, exclusive} || Lock <- proplists:get_value(exclusive_locks, Properties, [])]),
     logger:notice("Starting transaction~n  ClientClock = ~p~n  Locks = ~p", [ClientClock, Locks]),
@@ -607,7 +607,7 @@ start_tx_internal(From, ClientClock, Properties, State = #coord_state{stay_alive
             TransactionRecord = create_transaction_record(ClientClock2, StayAlive, From, false, Properties),
             case IsStatic of
                 true -> ok;
-                false -> From ! {ok, TransactionRecord#transaction.txn_id}
+                false -> From ! {Ref, {ok, TransactionRecord#transaction.txn_id}}
             end,
             % a new transaction was started, increment metrics
             ?PROMETHEUS_GAUGE:inc(antidote_open_transactions),
@@ -1135,7 +1135,8 @@ main_test_() ->
 
 % Setup and Cleanup
 setup() ->
-    {ok, Pid} = clocksi_interactive_coord:start_link(self(), ignore),
+    Ref = make_ref(),
+    {ok, Pid} = clocksi_interactive_coord:start_link({self(), Ref}, ignore),
     Pid.
 
 cleanup(Pid) ->

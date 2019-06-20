@@ -52,6 +52,8 @@
 % how long (in milliseconds) can a local server prefer local requests over remote requests?
 % (higher values should give higher throughput but also higher latency if remote lock requests are necessary)
 -define(INTER_DC_LOCK_REQUEST_DELAY, 500).
+% how long to wait for locks before requesting them again
+-define(INTER_DC_RETRY_DELAY, 5000).
 
 % how long (in milliseconds) may a transaction take to acquire the necessary locks?
 -define(LOCK_REQUEST_TIMEOUT, 20000).
@@ -161,20 +163,50 @@ handle_call(#request_locks{client_clock = ClientClock, locks = Locks}, From, Sta
     handle_request_locks(ClientClock, Locks, From, State);
 handle_call(#release_locks{commit_time = CommitTime}, From, State) ->
     {FromPid, _Tag} = From,
+    logger:info("release_locks ~p", [FromPid]),
     handle_release_locks(FromPid, CommitTime, State);
 handle_call(#request_locks_remote{}=Req, From, State) ->
     handle_request_locks_remote(Req, From, State);
 handle_call(#on_receive_remote_locks{snapshot_time = SnapshotTime, locks = Locks}, _From, State) ->
     handle_on_receive_remote_locks(Locks, SnapshotTime, State).
 
+handle_cast(start_interdc_lock_requests_timer, State) ->
+    logger:info("start_interdc_lock_requests_timer~n  State = State", [State]),
+    AlreadyActive = antidote_lock_server_state:get_timer_active(State),
+    case AlreadyActive of
+        true ->
+            {noreply, State};
+        false ->
+            erlang:send_after(?INTER_DC_RETRY_DELAY, self(), inter_dc_retry_timeout),
+            {noreply, antidote_lock_server_state:set_timer_active(true, State)}
+    end;
 handle_cast(_Request, State) ->
     {noreply, State}.
 
+handle_info(inter_dc_retry_timeout, State) ->
+    Time = erlang:system_time(),
+    AllDcIds = dc_meta_data_utilities:get_dcs(),
+    MyDcId = antidote_lock_server_state:my_dc_id(State),
+    OtherDcs = AllDcIds -- [MyDcId],
+    {Waiting, InterDcRequests} = antidote_lock_server_state:retries_for_waiting_remote(Time, ?INTER_DC_RETRY_DELAY div 2, OtherDcs, State),
+    logger:info("Retrying requests: ~p, ~p~n  State = ~p", [InterDcRequests, Waiting, State]),
+    send_interdc_lock_requests(InterDcRequests, Time, MyDcId),
+    case Waiting of
+        true ->
+            erlang:send_after(?INTER_DC_RETRY_DELAY, self(), inter_dc_retry_timeout),
+            {noreply, State};
+        false ->
+            % disable timer if no more requests
+            {noreply, antidote_lock_server_state:set_timer_active(false, State)}
+    end;
+
 handle_info({'EXIT', FromPid, _Reason}, State) ->
     % when a process crashes, its locks are released
+    logger:info("process exited ~p ~n~p", [FromPid, _Reason]),
     {reply, _, NewState} = handle_release_locks(FromPid, vectorclock:new(), State),
     {noreply, NewState};
 handle_info({transaction_timeout, FromPid}, State) ->
+    logger:info("transaction_timeout ~p", [FromPid]),
     {reply, Res, NewState} = handle_release_locks(FromPid, vectorclock:new(), State),
     case Res of
         ok ->
@@ -248,12 +280,14 @@ send_interdc_lock_request(OtherDcID, ReqMsg) ->
     ok = inter_dc_query:perform_request(?LOCK_SERVER_REQUEST, PDCID, term_to_binary(ReqMsg), fun antidote_lock_server:on_interdc_reply/2).
 
 on_interdc_reply(BinaryResp, _RequestCacheEntry) ->
-    {ok, Locks, SnapshotTime} = binary_to_term(BinaryResp),
-    case on_receive_remote_locks(Locks, SnapshotTime) of
-        ok -> ok;
-        {error, Reason} ->
-            logger:error("on_interdc_reply error ~p", [Reason])
-    end.
+    spawn_link(fun() ->
+        {ok, Locks, SnapshotTime} = binary_to_term(BinaryResp),
+        case on_receive_remote_locks(Locks, SnapshotTime) of
+            ok -> ok;
+            {error, Reason} ->
+                logger:error("on_interdc_reply error ~p", [Reason])
+        end
+    end).
 
 
 handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Timestamp, my_dc_id = RequesterDcId}, From, State) ->
@@ -326,6 +360,12 @@ run_actions(Actions, State) ->
 
     % send requests
     send_interdc_lock_requests(LockRequestActions, erlang:system_time(millisecond) + ?INTER_DC_LOCK_REQUEST_DELAY, MyDcId),
+
+    case maps:size(LockRequestActions) of
+        0 -> ok;
+        _ ->
+            gen_server:cast(self(), start_interdc_lock_requests_timer)
+    end,
 
     % reply to acquired locks
     lists:foreach(fun(R) ->

@@ -76,6 +76,7 @@
 -spec perform_request(inter_dc_message_type(), pdcid(), binary(), fun((binary(), #request_cache_entry{})->ok))
              -> ok | unknown_dc.
 perform_request(RequestType, PDCID, BinaryRequest, Func) ->
+    logger:info("inter_dc_query perform_request to ~p", [PDCID]),
     gen_server:call(?MODULE, {any_request, RequestType, PDCID, BinaryRequest, Func}).
 
 %% Adds the address of the remote DC to the list of available sockets.
@@ -136,6 +137,7 @@ handle_call({del_dc, DCID}, _From, State) ->
 
 %% Handle an instruction to ask a remote DC.
 handle_call({any_request, RequestType, PDCID, BinaryRequest, Func}, _From, State=#state{req_id=ReqId}) ->
+    logger:info("inter_dc_query handle_call any_request to ~p", [PDCID]),
     {DCID, Partition} = PDCID,
     case dict:find(DCID, State#state.sockets) of
     %% If socket found
@@ -154,9 +156,11 @@ handle_call({any_request, RequestType, PDCID, BinaryRequest, Func}, _From, State
         VersionBinary = ?MESSAGE_VERSION,
         ReqIdBinary = inter_dc_txn:req_id_to_bin(ReqId),
         FullRequest = <<VersionBinary/binary, ReqIdBinary/binary, RequestType, BinaryRequest/binary>>,
+        logger:info("inter_dc_query erlzmq:send to ~p", [PDCID]),
         ok = erlzmq:send(Socket, FullRequest),
         RequestEntry = #request_cache_entry{request_type=RequestType, req_id_binary=ReqIdBinary,
                                             func=Func, pdcid={DCID, SendPartition}, binary_req=FullRequest},
+        logger:info("inter_dc_query erlzmq:send done to ~p", [PDCID]),
         {reply, ok, req_sent(ReqIdBinary, RequestEntry, State)};
     %% If socket not found
     _ -> {reply, unknown_dc, State}
@@ -178,7 +182,9 @@ handle_info({zmq, _Socket, BinaryMsg, _Flags}, State=#state{unanswered_queries=T
         [{ReqIdBinary, CacheEntry=#request_cache_entry{request_type=RequestType, func=Func}}] ->
             case RestMsg of
                 <<RequestType, RestBinary/binary>> ->
-                    Func(RestBinary, CacheEntry);
+                    logger:info("inter_dc_query calling on receive func ~p, ~p", [RequestType, Func]),
+                    Func(RestBinary, CacheEntry),
+                    logger:info("inter_dc_query called on receive func ~p, ~p", [RequestType, Func]);
                 Other ->
                     logger:error("Received unknown reply: ~p", [Other])
             end,

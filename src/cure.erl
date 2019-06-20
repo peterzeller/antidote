@@ -129,6 +129,7 @@ update_objects(ClientCausalVC, Properties, Updates, StayAlive) ->
 -spec read_objects(snapshot_time() | ignore, txn_properties(), [bound_object()]) ->
     {ok, list(), vectorclock()} | {error, reason()}.
 read_objects(Clock, Properties, Objects) ->
+    logger:info("cure:read_objects(~p, ~p, ~p)", [Clock, Properties, Objects]),
     obtain_objects(Clock, Properties, Objects, false, object_value).
 get_objects(Clock, Properties, Objects) ->
     obtain_objects(Clock, Properties, Objects, false, object_state).
@@ -202,24 +203,30 @@ transform_reads(States, StateOrValue, Objects) ->
 -spec clocksi_istart_tx(snapshot_time() | ignore, txn_properties(), boolean()) ->
                                {ok, txid()} | {error, reason()}.
 clocksi_istart_tx(Clock, Properties, KeepAlive) ->
+    logger:info("clocksi_istart_tx(~p, ~p, ~p)", [Clock, Properties, KeepAlive]),
     TxPid = case KeepAlive of
                 true ->
                     whereis(clocksi_interactive_coord:generate_name(self()));
                 false ->
                     undefined
             end,
+    Ref = make_ref(),
     _ = case TxPid of
             undefined ->
-                {ok, _} = clocksi_interactive_coord_sup:start_fsm([self(), Clock,
+                {ok, _} = clocksi_interactive_coord_sup:start_fsm([{self(), Ref}, Clock,
                                                                       Properties, KeepAlive]);
             TxPid ->
-                ok = gen_statem:cast(TxPid, {start_tx, self(), Clock, Properties})
+                ok = gen_statem:cast(TxPid, {start_tx, {self(), Ref}, Clock, Properties})
         end,
+    logger:info("clocksi_istart_tx2(~p, ~p, ~p)", [Clock, Properties, KeepAlive]),
     receive
-        {ok, TxId} ->
-            {ok, TxId};
-        Other ->
-            {error, Other}
+        {Ref, Response} ->
+            case Response of
+                {ok, TxId} ->
+                    {ok, TxId};
+                Other ->
+                    {error, Other}
+            end
     end.
 
 -spec clocksi_full_icommit(txid()) -> {aborted, txid()} | {ok, {txid(), snapshot_time()}}
