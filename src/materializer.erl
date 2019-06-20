@@ -53,8 +53,8 @@ update_snapshot(Type, Snapshot, Op) ->
     try
         Type:update(Op, Snapshot)
     catch
-        _:_ ->
-            {error, {unexpected_operation, Op, Type}}
+        {E, Reason, StackTrace} ->
+            {error, {unexpected_operation, Op, Type, {E, Reason, StackTrace}}}
     end.
 
 %% @doc Applies updates in given order without any checks, errors are simply propagated.

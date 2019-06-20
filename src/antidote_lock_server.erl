@@ -124,7 +124,7 @@ request(Req, Timeout, NumTries) ->
         exit:{noproc, _} when NumTries > 0 ->
             % if there is no lock server running, start one and try again
             % we register this as a transient process directly under the antidote_sup:
-            supervisor:start_child(antidote_sup, #{
+            {ok, _} = supervisor:start_child(antidote_sup, #{
                 id => lock_server,
                 start => {?MODULE, start_link, []},
                 % using a transient process, because it will be started on demand and we need
@@ -220,7 +220,7 @@ handle_request_locks(ClientClock, Locks, From, State) ->
             {FromPid, _} = From,
             link(FromPid),
             % send a message so that we can kill the transaction if it takes too long
-            timer:send_after(?MAX_TRANSACTION_TIME, {transaction_timeout, FromPid}),
+            {ok, _} = timer:send_after(?MAX_TRANSACTION_TIME, {transaction_timeout, FromPid}),
 
             AllDcIds = dc_meta_data_utilities:get_dcs(),
 
@@ -249,8 +249,11 @@ send_interdc_lock_request(OtherDcID, ReqMsg) ->
 
 on_interdc_reply(BinaryResp, _RequestCacheEntry) ->
     {ok, Locks, SnapshotTime} = binary_to_term(BinaryResp),
-    on_receive_remote_locks(Locks, SnapshotTime),
-    ok.
+    case on_receive_remote_locks(Locks, SnapshotTime) of
+        ok -> ok;
+        {error, Reason} ->
+            logger:error("on_interdc_reply error ~p", [Reason])
+    end.
 
 
 handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Timestamp, my_dc_id = RequesterDcId}, From, State) ->
@@ -284,7 +287,7 @@ handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId, Snapshot) ->
                 end
             end, lists:zip(Locks, LockValues)),
             logger:info("handoff_locks_to_other_dcs~n  Updates = ~p", [Updates]),
-            antidote:update_objects(Updates, TxId),
+            ok = antidote:update_objects(Updates, TxId),
             {ok, LockValuesRaw2} = antidote:read_objects(LockObjects, TxId),
             logger:info("handoff_locks_to_other_dcs~n  LockValuesRaw2 = ~p", [LockValuesRaw2]),
             antidote:commit_transaction(TxId)
@@ -346,6 +349,7 @@ handle_on_receive_remote_locks(Locks, SnapshotTime, State) ->
             LockValues = [antidote_lock_crdt:parse_lock_value(V) || V <- LockValuesRaw],
             LockEntries = lists:zip(Locks, LockValues),
             {Actions, NewState} = antidote_lock_server_state:on_remote_locks_received(ReadClock, AllDcIds, LockEntries, State),
+            logger:info("handle_on_receive_remote_locks~n  State = ~p~n  NewState = ~p~n  Actions = ~p", [State, NewState, Actions]),
             run_actions(Actions, NewState),
             {noreply, NewState}
     end.

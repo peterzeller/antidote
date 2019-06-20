@@ -58,11 +58,19 @@ get_lock_object(Lock) ->
 
 -spec parse_lock_value(antidote_crdt_map_rr:value()) -> value().
 parse_lock_value(RawV) ->
-    maps:from_list([{binary_to_term(K), binary_to_term(V)} || {{K, _}, V} <- RawV]).
+    maps:from_list([{K, read_mv(V)} || {{K, _}, V} <- RawV]).
 
--spec make_lock_updates(antidote_locks:lock(), [{dcid(), dcid()}]) -> [{bound_object(), {op_name(), op_param()}}].
+
+read_mv([V]) -> V;
+read_mv(Vs) ->
+    throw({'antidote_lock_crdt does not have a unique value', Vs}).
+
+
+-spec make_lock_updates(antidote_locks:lock(), [{dcid(), dcid()}]) -> [{bound_object(), op_name(), op_param()}].
 make_lock_updates(_Lock, []) -> [];
 make_lock_updates(Lock, Updates) ->
-    [{get_lock_object(Lock), {update,
-        [{{K, antidote_crdt_register_mv}, {assign, V}} || {K,V} <- Updates]}}].
+    [{get_lock_object(Lock), update,
+        [{{K, antidote_crdt_register_mv}, {assign, V}} || {K,V} <- Updates]}].
+
+
 

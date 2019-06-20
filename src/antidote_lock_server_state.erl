@@ -267,7 +267,7 @@ missing_locks_by_dc(AllDcIds, MyDcId, Locks) ->
 % returns a list of current owners for this lock
 -spec missing_locks(list(dcid()), dcid(), antidote_locks:lock_kind(), antidote_lock_server:lock_crdt_value()) -> [dcid()].
 missing_locks(AllDcIds, MyDcId, Kind, LockValue) ->
-    case Kind of
+    Res = case Kind of
         shared ->
             %check that we own our own entry
             case maps:find(MyDcId, LockValue) of
@@ -293,7 +293,9 @@ missing_locks(AllDcIds, MyDcId, Kind, LockValue) ->
                     CurrentOwners = [maps:get(Dc, LockValue, Dc) || Dc <- AllDcIds],
                     lists:usort(CurrentOwners) -- [MyDcId]
             end
-    end.
+    end,
+    logger:info("missing_locks(~p, ~p, ~p, ~p) -> ~p", [AllDcIds, MyDcId, Kind, LockValue, Res]),
+    Res.
 
 
 

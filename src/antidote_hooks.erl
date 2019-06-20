@@ -122,7 +122,7 @@ execute_pre_commit_hook({Key, Bucket}, Type, Param) ->
             try Module:Function({{Key, Bucket}, Type, Param}) of
                 {ok, Res} -> Res
             catch
-                _:Reason -> {error, {pre_commit_hook, Reason}}
+                E:Reason:StackTrace -> {error, {pre_commit_hook, {E, Reason, StackTrace}}}
             end
     end;
 %% The following is kept to be backward compatible with the old
@@ -141,7 +141,7 @@ execute_post_commit_hook({Key, Bucket}, Type, Param) ->
             try Module:Function({{Key, Bucket}, Type, Param}) of
                 {ok, Res} -> Res
             catch
-                _:Reason -> {error, {post_commit_hook, Reason}}
+                E:Reason:StackTrace -> {error, {post_commit_hook, {E, Reason, StackTrace}}}
             end
     end;
 execute_post_commit_hook(Key, Type, Param) ->
