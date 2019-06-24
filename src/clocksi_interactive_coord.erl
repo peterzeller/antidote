@@ -604,13 +604,16 @@ start_tx_internal({From, Ref}, ClientClock, Properties, State = #coord_state{sta
         {error, Reason} ->
             {error, Reason};
         {ok, ClientClock2} ->
+            logger:notice("create_transaction_record"),
             TransactionRecord = create_transaction_record(ClientClock2, StayAlive, From, false, Properties),
+            logger:notice("create_transaction_record done"),
             case IsStatic of
                 true -> ok;
                 false -> From ! {Ref, {ok, TransactionRecord#transaction.txn_id}}
             end,
             % a new transaction was started, increment metrics
             ?PROMETHEUS_GAUGE:inc(antidote_open_transactions),
+            logger:notice("start_tx_internal done"),
             {ok, State#coord_state{transaction = TransactionRecord, num_to_read = 0, properties = Properties, locks = Locks}}
     end.
 
@@ -620,27 +623,37 @@ start_tx_internal({From, Ref}, ClientClock, Properties, State = #coord_state{sta
     boolean(), pid() | undefined, boolean(), txn_properties()) -> tx().
 %%noinspection ErlangUnresolvedFunction
 create_transaction_record(ClientClock, StayAlive, From, _IsStatic, Properties) ->
+    logger:notice("create_transaction_record 1"),
     %% Seed the random because you pick a random read server, this is stored in the process state
     _Res = rand_compat:seed(erlang:phash2([node()]), erlang:monotonic_time(), erlang:unique_integer()),
+    logger:notice("create_transaction_record 2"),
     {ok, SnapshotTime} = case ClientClock of
                              ignore ->
+                                 logger:notice("create_transaction_record 3"),
                                  get_snapshot_time();
                              _ ->
+                                 logger:notice("create_transaction_record 4"),
                                  case antidote:get_txn_property(update_clock, Properties) of
                                      update_clock ->
+                                         logger:notice("create_transaction_record 5"),
                                          get_snapshot_time(ClientClock);
                                      no_update_clock ->
+                                         logger:notice("create_transaction_record 6"),
                                          {ok, ClientClock}
                                  end
                          end,
+    logger:notice("create_transaction_record 7"),
     DcId = ?DC_META_UTIL:get_my_dc_id(),
+    logger:notice("create_transaction_record 8"),
     LocalClock = ?VECTORCLOCK:get(DcId, SnapshotTime),
+    logger:notice("create_transaction_record 9"),
     Name = case StayAlive of
                true ->
                    generate_name(From);
                false ->
                    self()
            end,
+    logger:notice("create_transaction_record 10"),
     TransactionId = #tx_id{local_start_time = LocalClock, server_pid = Name},
     #transaction{snapshot_time_local = LocalClock,
         vec_snapshot_time = SnapshotTime,

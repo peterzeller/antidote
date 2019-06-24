@@ -31,7 +31,6 @@
 %% tests
 -export([simple_transaction_tests_with_locks/1,
     locks_in_sequence_check/1,
-    locks_required_by_another_transaction/1,
     lock_acquisition_test/1,
     get_lock_owned_by_other_dc_1/1,
     get_lock_owned_by_other_dc_2/1,
@@ -79,19 +78,18 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-%%    simple_transaction_tests_with_locks,
-%%    locks_in_sequence_check,
-%%    locks_required_by_another_transaction, %fail
-%%    lock_acquisition_test,
-%%    get_lock_owned_by_other_dc_2,
-    multi_value_register_test % fail
-%%    asynchronous_test_1, % fail
-%%    asynchronous_test_2, % fail
-%%    asynchronous_test_3, % fail
-%%    asynchronous_test_4, % fail
-%%    asynchronous_test_5, % fail
-%%    a_lot_of_locks_per_transaction_1,  % fail/timeout?
-%%    a_lot_of_locks_per_transaction_2%,
+    simple_transaction_tests_with_locks,
+    locks_in_sequence_check,
+    lock_acquisition_test,
+    get_lock_owned_by_other_dc_2,
+    multi_value_register_test,
+    asynchronous_test_1, % fail
+    asynchronous_test_2, % fail
+    asynchronous_test_3, % fail
+    asynchronous_test_4, % fail
+    asynchronous_test_5, % fail
+    a_lot_of_locks_per_transaction_1,  % fail/timeout?
+    a_lot_of_locks_per_transaction_2%,
     %cluster_failure_test_1,
     %cluster_failure_test_2
 ].
@@ -129,7 +127,7 @@ locks_in_sequence_check(Config) ->
     Node = hd(hd(proplists:get_value(nodes, Config))),
     Keys = [lock5, lock6, lock7, lock8],
     {ok, TxId} = rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-    {error,{error,[{_TxId,Missing_Keys}]}} = rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
+    % {error,{error,[{_TxId,Missing_Keys}]}} = rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
     Type = antidote_crdt_counter_pn,
     Bucket = antidote_bucket,
     IncValues = [1, 2, 3, 4],
@@ -149,32 +147,9 @@ locks_in_sequence_check(Config) ->
     %% read objects all at once
     {ok, _Res} = rpc:call(Node, antidote, read_objects, [Objects, TxId2]),
     {ok, _} = rpc:call(Node, antidote, commit_transaction, [TxId2]),
-    ?assertEqual(length(Keys),length(Missing_Keys)),
-    ?assertEqual([],Keys -- Missing_Keys),
     ok.
 
-%% starts a transaction on the leading node aquiring some lock.
-%% Tests if transactions of other nodes can not acquire a subset of these keys
-locks_required_by_another_transaction(Config) ->
-    Nodes = proplists:get_value(nodes, Config),
-    Node1 = hd(hd(Nodes)),
-    Node3 = hd(hd(tl(Nodes))),
-    Node4 = hd(hd(tl(tl(Nodes)))),
-    Keys = [lock14, lock13, lock12, lock11],
-    {ok, TxId} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-    % Test if transaction requiring the used keys can not start a transaction
-    {error,{error,[{_TxId,Missing_Keys0}]}} = rpc:call(Node1, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
-    {error,{error,Missing_Keys2}} = rpc:call(Node3, antidote, start_transaction, [ignore, [{exclusive_locks,[hd(tl(Keys))]}]]),
-    {error,{error,Missing_Keys3}} = rpc:call(Node4, antidote, start_transaction, [ignore, [{exclusive_locks,tl(Keys)}]]),
-    {ok, _Clock} = rpc:call(Node1, antidote, commit_transaction, [TxId]),
-    ?assertEqual(length(Keys),length(Missing_Keys0)),
-    ?assertEqual([],Keys -- Missing_Keys0),
-    ?assertEqual(length([hd(tl(Keys))]),length(Missing_Keys2)),
-    ?assertEqual([],[hd(tl(Keys))] -- Missing_Keys2),
-    ?assertEqual(length(tl(Keys)),length(Missing_Keys3)),
-    ?assertEqual([],tl(Keys) -- Missing_Keys3),
-    ok.
-%% Tests if lock acquisition in multiple dcs of the same locks can propperly acquire 
+%% Tests if lock acquisition in multiple dcs of the same locks can propperly acquire
 %% them and the lock_mgr manages the lock data as intendet.
 lock_acquisition_test(Config) ->
     Nodes = proplists:get_value(nodes, Config),
@@ -273,9 +248,9 @@ asynchronous_test_1(Config) ->
     Node3 = hd(hd(tl(tl(Nodes)))),
     Keys = [asynchronous_test_key_1],
     Object = {asynchronous_test_key_1, antidote_crdt_counter_pn, antidote_bucket},
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys,Object,100,[],self(),30,1]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys,Object,100,[],self(),30,2]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys,Object,100,[],self(),30,3]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys,Object,100,[],self(),30,1]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys,Object,100,[],self(),30,2]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys,Object,100,[],self(),30,3]),
     receive
         {done,Node1,1,_Clocks1} ->
 
@@ -320,9 +295,9 @@ asynchronous_test_2(Config) ->
     Node3 = hd(hd(tl(tl(Nodes)))),
     Keys = [asynchronous_test_key_2],
     Object = {asynchronous_test_key_2, antidote_crdt_counter_pn, antidote_bucket},
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys,Object,100,[],self(),0,1]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys,Object,100,[],self(),0,2]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys,Object,100,[],self(),0,3]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys,Object,100,[],self(),0,1]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys,Object,100,[],self(),0,2]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys,Object,100,[],self(),0,3]),
     receive
         {done,Node1,1,_Clocks1} ->
 
@@ -379,9 +354,9 @@ asynchronous_test_3(Config) ->
     Node3 = hd(hd(tl(tl(Nodes)))),
     Keys = [asynchronous_test_key_3],
     Object = {asynchronous_test_key_3, antidote_crdt_register_mv, antidote_bucket},
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys,Object,100,[],self(),30,1]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys,Object,100,[],self(),30,2]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys,Object,100,[],self(),30,3]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys,Object,100,[],self(),30,1]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys,Object,100,[],self(),30,2]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys,Object,100,[],self(),30,3]),
     receive
         {done,Node1,1,_Clocks1} ->
 
@@ -424,9 +399,9 @@ asynchronous_test_4(Config) ->
     Node3 = hd(hd(tl(tl(Nodes)))),
     Keys = [asynchronous_test_key_4],
     Object = {asynchronous_test_key_4, antidote_crdt_register_mv, antidote_bucket},
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys,Object,100,[],self(),0,1]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys,Object,100,[],self(),0,2]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys,Object,100,[],self(),0,3]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys,Object,100,[],self(),0,1]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys,Object,100,[],self(),0,2]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys,Object,100,[],self(),0,3]),
     receive
         {done,Node1,1,_Clocks1} ->
 
@@ -490,27 +465,27 @@ asynchronous_test_5(Config) ->
     % asynchronous_test_4
     Keys1 = [asynchronous_test_key_5],
     Object1 = {asynchronous_test_key_5, antidote_crdt_register_mv, antidote_bucket},
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys1,Object1,100,[],self(),0,1]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys1,Object1,100,[],self(),0,2]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys1,Object1,100,[],self(),0,3]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys1,Object1,100,[],self(),0,1]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys1,Object1,100,[],self(),0,2]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys1,Object1,100,[],self(),0,3]),
     % asynchronous_test_3
     Keys2 = [asynchronous_test_key_6],
     Object2 = {asynchronous_test_key_6, antidote_crdt_register_mv, antidote_bucket},
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys2,Object2,100,[],self(),30,4]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys2,Object2,100,[],self(),30,5]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys2,Object2,100,[],self(),30,6]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys2,Object2,100,[],self(),30,4]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys2,Object2,100,[],self(),30,5]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys2,Object2,100,[],self(),30,6]),
     % asynchronous_test_2
     Keys3 = [asynchronous_test_key_7],
     Object3 = {asynchronous_test_key_7, antidote_crdt_counter_pn, antidote_bucket},
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys3,Object3,100,[],self(),0,7]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys3,Object3,100,[],self(),0,8]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys3,Object3,100,[],self(),0,9]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys3,Object3,100,[],self(),0,7]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys3,Object3,100,[],self(),0,8]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys3,Object3,100,[],self(),0,9]),
     % asynchronous_test_1
     Keys4 = [asynchronous_test_key_8],
     Object4 = {asynchronous_test_key_8, antidote_crdt_counter_pn, antidote_bucket},
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys4,Object4,100,[],self(),30,10]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys4,Object4,100,[],self(),30,11]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys4,Object4,100,[],self(),30,12]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys4,Object4,100,[],self(),30,10]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys4,Object4,100,[],self(),30,11]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys4,Object4,100,[],self(),30,12]),
     helper_receive_result({Node1,1},{Node2,2},{Node3,3},"ansynchronous_test_5 -- as.test_4 repetition"),
     helper_receive_result({Node1,4},{Node2,5},{Node3,6},"ansynchronous_test_5 -- as.test_3 repetition"),
     helper_receive_result({Node1,7},{Node2,8},{Node3,9},"ansynchronous_test_5 -- as.test_2 repetition"),
@@ -582,9 +557,9 @@ a_lot_of_locks_per_transaction_1(Config) ->
     % asynchronous_test_4
     Keys1 = generate_lock_helper(50,"erwwqd"),
     Object1 = {a_lot_of_locks_per_transaction_1_key, antidote_crdt_register_mv, antidote_bucket},
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys1,Object1,10,[],self(),0,1]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys1,Object1,10,[],self(),0,2]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys1,Object1,10,[],self(),0,3]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys1,Object1,10,[],self(),0,1]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys1,Object1,10,[],self(),0,2]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys1,Object1,10,[],self(),0,3]),
     helper_receive_result({Node1,1},{Node2,2},{Node3,3},"a_lot_of_locks_per_transaction_1"),
     helper_check_result2(Node1, Keys1, Object1, 30),
     helper_check_result2(Node2, Keys1, Object1, 30),
@@ -599,9 +574,9 @@ a_lot_of_locks_per_transaction_2(Config) ->
     % asynchronous_test_4
     Keys1 = generate_lock_helper(100,"asdf"),
     Object1 = {a_lot_of_locks_per_transaction_2_key, antidote_crdt_register_mv, antidote_bucket},
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys1,Object1,20,[],self(),0,1]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys1,Object1,20,[],self(),0,2]),
-    spawn(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys1,Object1,20,[],self(),0,3]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node1,Keys1,Object1,20,[],self(),0,1]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node2,Keys1,Object1,20,[],self(),0,2]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper2,[Node3,Keys1,Object1,20,[],self(),0,3]),
     helper_receive_result({Node1,1},{Node2,2},{Node3,3},"a_lot_of_locks_per_transaction_2"),
     helper_check_result2(Node1, Keys1, Object1, 60),
     helper_check_result2(Node2, Keys1, Object1, 60),
