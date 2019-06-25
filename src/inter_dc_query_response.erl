@@ -92,7 +92,6 @@ handle_cast({request_permissions, BinaryRequest, QueryState}, State) ->
 
 handle_cast({request_locks, BinaryRequest, QueryState}, State) ->
     Request = binary_to_term(BinaryRequest),
-    logger:info("received request_locks ~p~n  ~p", [nodes(), Request]),
     Response = antidote_lock_server:request_locks_remote(Request),
     ok = inter_dc_query_receive_socket:send_response(term_to_binary(Response), QueryState),
     {noreply, State};

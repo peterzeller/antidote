@@ -137,7 +137,6 @@ handle_call({del_dc, DCID}, _From, State) ->
 
 %% Handle an instruction to ask a remote DC.
 handle_call({any_request, RequestType, PDCID, BinaryRequest, Func}, _From, State=#state{req_id=ReqId}) ->
-    logger:info("inter_dc_query handle_call any_request to ~p", [PDCID]),
     {DCID, Partition} = PDCID,
     case dict:find(DCID, State#state.sockets) of
     %% If socket found
@@ -157,10 +156,12 @@ handle_call({any_request, RequestType, PDCID, BinaryRequest, Func}, _From, State
         ReqIdBinary = inter_dc_txn:req_id_to_bin(ReqId),
         FullRequest = <<VersionBinary/binary, ReqIdBinary/binary, RequestType, BinaryRequest/binary>>,
         logger:info("inter_dc_query erlzmq:send to ~p", [PDCID]),
-        ok = erlzmq:send(Socket, FullRequest),
+        spawn_link(fun() ->
+            {Time, ok} = timer:tc(fun() -> erlzmq:send(Socket, FullRequest) end),
+            logger:info("inter_dc_query erlzmq:send to ~p finished in ~pµs", [PDCID, Time])
+        end),
         RequestEntry = #request_cache_entry{request_type=RequestType, req_id_binary=ReqIdBinary,
                                             func=Func, pdcid={DCID, SendPartition}, binary_req=FullRequest},
-        logger:info("inter_dc_query erlzmq:send done to ~p", [PDCID]),
         {reply, ok, req_sent(ReqIdBinary, RequestEntry, State)};
     %% If socket not found
     _ -> {reply, unknown_dc, State}
@@ -183,8 +184,8 @@ handle_info({zmq, _Socket, BinaryMsg, _Flags}, State=#state{unanswered_queries=T
             case RestMsg of
                 <<RequestType, RestBinary/binary>> ->
                     logger:info("inter_dc_query calling on receive func ~p, ~p", [RequestType, Func]),
-                    Func(RestBinary, CacheEntry),
-                    logger:info("inter_dc_query called on receive func ~p, ~p", [RequestType, Func]);
+                    {Time, _} = timer:tc(fun() -> Func(RestBinary, CacheEntry) end),
+                    logger:info("inter_dc_query called on receive func ~p, ~p finished in ~pµs (size: ~p / ~p)", [RequestType, Func, Time, size(RestBinary), size(CacheEntry)]);
                 Other ->
                     logger:error("Received unknown reply: ~p", [Other])
             end,

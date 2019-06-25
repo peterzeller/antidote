@@ -599,21 +599,17 @@ init_state(StayAlive, FullCommit, IsStatic, Properties) ->
 start_tx_internal({From, Ref}, ClientClock, Properties, State = #coord_state{stay_alive = StayAlive, is_static = IsStatic}) ->
     Locks = ordsets:from_list([{Lock, shared} || Lock <- proplists:get_value(shared_locks, Properties, [])]
         ++ [{Lock, exclusive} || Lock <- proplists:get_value(exclusive_locks, Properties, [])]),
-    logger:notice("Starting transaction~n  ClientClock = ~p~n  Locks = ~p", [ClientClock, Locks]),
     case antidote_locks:obtain_locks(ClientClock, Locks) of
         {error, Reason} ->
             {error, Reason};
         {ok, ClientClock2} ->
-            logger:notice("create_transaction_record"),
             TransactionRecord = create_transaction_record(ClientClock2, StayAlive, From, false, Properties),
-            logger:notice("create_transaction_record done"),
             case IsStatic of
                 true -> ok;
                 false -> From ! {Ref, {ok, TransactionRecord#transaction.txn_id}}
             end,
             % a new transaction was started, increment metrics
             ?PROMETHEUS_GAUGE:inc(antidote_open_transactions),
-            logger:notice("start_tx_internal done"),
             {ok, State#coord_state{transaction = TransactionRecord, num_to_read = 0, properties = Properties, locks = Locks}}
     end.
 
@@ -623,37 +619,29 @@ start_tx_internal({From, Ref}, ClientClock, Properties, State = #coord_state{sta
     boolean(), pid() | undefined, boolean(), txn_properties()) -> tx().
 %%noinspection ErlangUnresolvedFunction
 create_transaction_record(ClientClock, StayAlive, From, _IsStatic, Properties) ->
-    logger:notice("create_transaction_record 1"),
     %% Seed the random because you pick a random read server, this is stored in the process state
     _Res = rand_compat:seed(erlang:phash2([node()]), erlang:monotonic_time(), erlang:unique_integer()),
-    logger:notice("create_transaction_record 2"),
     {ok, SnapshotTime} = case ClientClock of
                              ignore ->
-                                 logger:notice("create_transaction_record 3"),
-                                 get_snapshot_time();
+                                 {Time, ST} = timer:tc(fun get_snapshot_time/0),
+                                 logger:notice("get_snapshot_time took ~pµs", [Time]),
+                                 ST;
                              _ ->
-                                 logger:notice("create_transaction_record 4"),
                                  case antidote:get_txn_property(update_clock, Properties) of
                                      update_clock ->
-                                         logger:notice("create_transaction_record 5"),
                                          get_snapshot_time(ClientClock);
                                      no_update_clock ->
-                                         logger:notice("create_transaction_record 6"),
                                          {ok, ClientClock}
                                  end
                          end,
-    logger:notice("create_transaction_record 7"),
     DcId = ?DC_META_UTIL:get_my_dc_id(),
-    logger:notice("create_transaction_record 8"),
     LocalClock = ?VECTORCLOCK:get(DcId, SnapshotTime),
-    logger:notice("create_transaction_record 9"),
     Name = case StayAlive of
                true ->
                    generate_name(From);
                false ->
                    self()
            end,
-    logger:notice("create_transaction_record 10"),
     TransactionId = #tx_id{local_start_time = LocalClock, server_pid = Name},
     #transaction{snapshot_time_local = LocalClock,
         vec_snapshot_time = SnapshotTime,
@@ -685,7 +673,6 @@ execute_command(read, {Key, Type}, Sender, State = #coord_state{
 
 %% @doc Read a batch of objects, asynchronous
 execute_command(read_objects, Objects, Sender, State = #coord_state{transaction=Transaction}) ->
-    logger:info("read_objects(~p)", [Objects]),
     ExecuteReads = fun({Key, Type}, AccState) ->
         ?PROMETHEUS_COUNTER:inc(antidote_operations_total, [read_async]),
         Partition = ?LOG_UTIL:get_key_partition(Key),
@@ -704,7 +691,6 @@ execute_command(read_objects, Objects, Sender, State = #coord_state{transaction=
 
 %% @doc Perform update operations on a batch of Objects
 execute_command(update_objects, UpdateOps, Sender, State = #coord_state{transaction=Transaction}) ->
-    logger:info("update_objects(~p)", [UpdateOps]),
     ExecuteUpdates = fun(Op, AccState=#coord_state{
         client_ops = ClientOps0,
         updated_partitions = UpdatedPartitions0
@@ -1065,7 +1051,6 @@ before_commit_checks(State) ->
                 DcId = ?DC_META_UTIL:get_my_dc_id(),
                 ?VECTORCLOCK:set(DcId, CommitTime, Transaction#transaction.vec_snapshot_time);
             _ ->
-                logger:error("Transaction committing without commit time set ~p", [State#coord_state.commit_time]),
                 Transaction#transaction.vec_snapshot_time
         end,
     Locks = State#coord_state.locks,
