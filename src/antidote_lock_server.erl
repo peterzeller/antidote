@@ -28,8 +28,10 @@
 
 %% @doc A lock server is running on each datacenter
 %% it is globally registered under the name 'antidote_lock_server'
-%%
 %% and manages the locks related to the transactions running on the same shard
+
+%% TODO move transaction/IO code into separate processes
+
 -module(antidote_lock_server).
 %%
 -include("antidote.hrl").
@@ -53,7 +55,7 @@
 % (higher values should give higher throughput but also higher latency if remote lock requests are necessary)
 -define(INTER_DC_LOCK_REQUEST_DELAY, 500).
 % how long to wait for locks before requesting them again
--define(INTER_DC_RETRY_DELAY, 5000).
+-define(INTER_DC_RETRY_DELAY, 500).
 
 % how long (in milliseconds) may a transaction take to acquire the necessary locks?
 -define(LOCK_REQUEST_TIMEOUT, 20000).
@@ -294,21 +296,30 @@ handle_request_locks(ClientClock, Locks, From, State) ->
 -spec send_interdc_lock_requests(antidote_lock_server_state:lock_request_actions(), dcid()) -> ok.
 send_interdc_lock_requests(RequestsByDc, MyDcID) ->
     maps:fold(fun(OtherDcID, RequestedLocks, ok) ->
-        logger:notice("antidote_lock_server: requesting locks from ~p~n  RequestedLocks = ~p", [OtherDcID, RequestedLocks]),
-        ByTime = antidote_utils:group_by_first([{RequestTime, {Lock, Kind}} || {Lock, {Kind, RequestTime}} <- RequestedLocks]),
+        ByTime = antidote_list_utils:group_by_first([{RequestTime, {Lock, Kind}} || {Lock, {Kind, RequestTime}} <- RequestedLocks]),
+        logger:notice("antidote_lock_server: requesting locks from ~p~n  RequestedLocks = ~p~n", [OtherDcID, RequestedLocks]),
         % send one request for each request-time
         maps:fold(fun(Time, RLocks, _) ->
             ReqMsg = #request_locks_remote{timestamp = Time, locks = RLocks, my_dc_id = MyDcID},
-            send_interdc_lock_request(OtherDcID, ReqMsg),
+            logger:notice("antidote_lock_server: requesting locks~n  MyDcID = ~p~n OtherDcId = ~p~n  Time = ~p~n  RLocks = ~p~n", [MyDcID, OtherDcID, Time, RLocks]),
+            send_interdc_lock_request(OtherDcID, ReqMsg, 3),
             ok
         end, ok, ByTime)
     end, ok, RequestsByDc).
 
--spec send_interdc_lock_request(dcid(), #request_locks_remote{}) -> ok.
-send_interdc_lock_request(OtherDcID, ReqMsg) ->
+-spec send_interdc_lock_request(dcid(), #request_locks_remote{}, integer()) -> ok.
+send_interdc_lock_request(OtherDcID, ReqMsg, Retries) ->
     {LocalPartition, _} = log_utilities:get_key_partition(locks),
     PDCID = {OtherDcID, LocalPartition},
-    ok = inter_dc_query:perform_request(?LOCK_SERVER_REQUEST, PDCID, term_to_binary(ReqMsg), fun antidote_lock_server:on_interdc_reply/2).
+    case inter_dc_query:perform_request(?LOCK_SERVER_REQUEST, PDCID, term_to_binary(ReqMsg), fun antidote_lock_server:on_interdc_reply/2) of
+        ok -> ok;
+        Err when Retries > 0 ->
+            logger:warning("send_interdc_lock_request failed ~p ~p ~p ~p", [Err, OtherDcID, ReqMsg, Retries]),
+            send_interdc_lock_request(OtherDcID, ReqMsg, Retries - 1);
+        Err ->
+            logger:error("send_interdc_lock_request failed ~p ~p ~p", [Err, OtherDcID, ReqMsg]),
+            ok
+    end.
 
 on_interdc_reply(BinaryResp, _RequestCacheEntry) ->
     spawn_link(fun() ->

@@ -27,7 +27,7 @@
 %% -------------------------------------------------------------------
 
 
--module(antidote_utils).
+-module(antidote_list_utils).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

@@ -156,15 +156,20 @@ handle_call({any_request, RequestType, PDCID, BinaryRequest, Func}, _From, State
         ReqIdBinary = inter_dc_txn:req_id_to_bin(ReqId),
         FullRequest = <<VersionBinary/binary, ReqIdBinary/binary, RequestType, BinaryRequest/binary>>,
         logger:info("inter_dc_query erlzmq:send to ~p", [PDCID]),
-        spawn_link(fun() ->
-            {Time, ok} = timer:tc(fun() -> erlzmq:send(Socket, FullRequest) end),
-            logger:info("inter_dc_query erlzmq:send to ~p finished in ~pµs", [PDCID, Time])
-        end),
-        RequestEntry = #request_cache_entry{request_type=RequestType, req_id_binary=ReqIdBinary,
-                                            func=Func, pdcid={DCID, SendPartition}, binary_req=FullRequest},
-        {reply, ok, req_sent(ReqIdBinary, RequestEntry, State)};
+        case timer:tc(fun() -> erlzmq:send(Socket, FullRequest) end) of
+            {Time, ok} ->
+                logger:info("inter_dc_query erlzmq:send to ~p finished in ~pµs", [PDCID, Time]),
+                RequestEntry = #request_cache_entry{request_type=RequestType, req_id_binary=ReqIdBinary,
+                    func=Func, pdcid={DCID, SendPartition}, binary_req=FullRequest},
+                {reply, ok, req_sent(ReqIdBinary, RequestEntry, State)};
+            {_Time, Err} ->
+                logger:error("inter_dc_query erlzmq:send to ~p failed: ~p", [PDCID, Err]),
+                {reply, {error, Err}, State}
+        end;
     %% If socket not found
-    _ -> {reply, unknown_dc, State}
+    _ ->
+        logger:error("Unknown DC ~p~n  known dcs = ~p", [DCID, dict:fetch_keys(State#state.sockets)]),
+        {reply, unknown_dc, State}
     end.
 
 close_dc_sockets(DCPartitionDict) ->

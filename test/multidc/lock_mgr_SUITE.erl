@@ -78,11 +78,11 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-%%    simple_transaction_tests_with_locks,
-%%    locks_in_sequence_check,
-%%    lock_acquisition_test,
-%%    get_lock_owned_by_other_dc_2,
-%%    multi_value_register_test,
+    simple_transaction_tests_with_locks,
+    locks_in_sequence_check,
+    lock_acquisition_test,
+    get_lock_owned_by_other_dc_2,
+    multi_value_register_test,
     asynchronous_test_1 % fail
 %%    asynchronous_test_2, % fail
 %%    asynchronous_test_3, % fail
@@ -248,9 +248,9 @@ asynchronous_test_1(Config) ->
     Node3 = hd(hd(tl(tl(Nodes)))),
     Keys = [asynchronous_test_key_1],
     Object = {asynchronous_test_key_1, antidote_crdt_counter_pn, antidote_bucket},
-    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys,Object,100,[],self(),30,1]),
-    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys,Object,100,[],self(),30,2]),
-    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys,Object,100,[],self(),30,3]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys,Object,100,[],self(),0,1]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys,Object,100,[],self(),0,2]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys,Object,100,[],self(),0,3]),
     receive
         {done,Node1,1,_Clocks1} ->
 
@@ -333,13 +333,17 @@ asynchronous_test_helper(Node,_,_,0,Clocks,Caller,_,Id)->
     Caller ! {done,Node,Id,Clocks};
 
 asynchronous_test_helper(Node,Keys,Object,Increments,Clocks,Caller,Delay,Id)->
+    ct:pal("Starting transaction ~p ~p", [Node, Increments]),
     case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
+            ct:pal("Started transaction ~p ~p", [Node, Increments]),
             ok = rpc:call(Node, antidote, update_objects,[[{Object, increment, 1}],TxId1]),
             {ok, Clock1} = rpc:call(Node, antidote, commit_transaction, [TxId1]),
+            ct:pal("Committed transaction ~p ~p", [Node, Increments]),
             timer:sleep(Delay),
             asynchronous_test_helper(Node, Keys, Object,Increments-1,[Clock1|Clocks],Caller,Delay,Id);
         {error,{error,_Missing_Locks}} ->
+            ct:pal("Error ~p ~p", [Node, Increments]),
             timer:sleep(Delay),
             asynchronous_test_helper(Node, Keys,Object,Increments,Clocks,Caller,Delay,Id)
     end.

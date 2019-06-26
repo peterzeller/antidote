@@ -129,7 +129,6 @@ update_objects(ClientCausalVC, Properties, Updates, StayAlive) ->
 -spec read_objects(snapshot_time() | ignore, txn_properties(), [bound_object()]) ->
     {ok, list(), vectorclock()} | {error, reason()}.
 read_objects(Clock, Properties, Objects) ->
-    logger:info("cure:read_objects(~p, ~p, ~p)", [Clock, Properties, Objects]),
     obtain_objects(Clock, Properties, Objects, false, object_value).
 get_objects(Clock, Properties, Objects) ->
     obtain_objects(Clock, Properties, Objects, false, object_state).
@@ -138,7 +137,6 @@ get_objects(Clock, Properties, Objects) ->
 -spec obtain_objects(snapshot_time() | ignore, txn_properties(), [bound_object()], boolean(), object_value|object_state) ->
                           {ok, list(), vectorclock()} | {error, reason()}.
 obtain_objects(Clock, Properties, Objects, StayAlive, StateOrValue) ->
-    logger:info("obtain_objects1"),
     SingleKey = case Objects of
                     [_O] -> %% Single key update
                         case Clock of
@@ -155,12 +153,9 @@ obtain_objects(Clock, Properties, Objects, StayAlive, StateOrValue) ->
                 perform_singleitem_operation(Clock, Key, Type, Properties),
             {ok, transform_reads([Val], StateOrValue, Objects), CommitTime};
         false ->
-            logger:info("obtain_objects2"),
             case application:get_env(antidote, txn_prot) of
                 {ok, clocksi} ->
-                    logger:info("obtain_objects3"),
                     {ok, TxId} = clocksi_istart_tx(Clock, Properties, StayAlive),
-                    logger:info("obtain_objects4"),
                     case obtain_objects(Objects, TxId, StateOrValue) of
                         {ok, Res} ->
                             {ok, CommitTime} = commit_transaction(TxId),
@@ -207,7 +202,6 @@ transform_reads(States, StateOrValue, Objects) ->
 -spec clocksi_istart_tx(snapshot_time() | ignore, txn_properties(), boolean()) ->
                                {ok, txid()} | {error, reason()}.
 clocksi_istart_tx(Clock, Properties, KeepAlive) ->
-    logger:info("clocksi_istart_tx(~p, ~p, ~p)", [Clock, Properties, KeepAlive]),
     TxPid = case KeepAlive of
                 true ->
                     whereis(clocksi_interactive_coord:generate_name(self()));
@@ -222,7 +216,6 @@ clocksi_istart_tx(Clock, Properties, KeepAlive) ->
             TxPid ->
                 ok = gen_statem:cast(TxPid, {start_tx, {self(), Ref}, Clock, Properties})
         end,
-    logger:info("clocksi_istart_tx2(~p, ~p, ~p)", [Clock, Properties, KeepAlive]),
     receive
         {Ref, Response} ->
             case Response of
