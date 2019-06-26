@@ -41,7 +41,7 @@
 -export([
     initial/1,
     my_dc_id/1,
-    new_request/7, new_remote_request/5, on_remote_locks_received/4, remove_locks/3, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/4, print_state/1, print_systemtime/1, print_vc/1]).
+    new_request/7, new_remote_request/5, on_remote_locks_received/4, remove_locks/3, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/4, print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_request_actions/1, is_lock_process/2]).
 
 
 % state invariants:
@@ -238,10 +238,35 @@ print_dc({Dc, _}) when is_atom(Dc) ->
 print_dc(Dc) ->
     Dc.
 
-print_systemtime(Ms) ->
-    {{_Year, _Month, _Day}, {Hour, Minute, Second}} = calendar:system_time_to_local_time(Ms, millisecond),
-    lists:flatten(io_lib:format("~p:~p:~p.~p", [Hour,Minute, Second, Ms rem 1000])).
 
+print_systemtime(Ms) when is_integer(Ms) ->
+    {{_Year, _Month, _Day}, {Hour, Minute, Second}} = calendar:system_time_to_local_time(Ms, millisecond),
+    lists:flatten(io_lib:format("~p:~p:~p.~p", [Hour,Minute, Second, Ms rem 1000]));
+print_systemtime(Other) -> Other.
+
+
+-spec print_actions(actions()) -> any().
+print_actions({HandOverActions, LockRequestActions, Replies}) ->
+    H = [#{' handover_lock' => L, to => print_dc(Dc)} || {L, Dc, _} <- HandOverActions],
+    L = print_lock_request_actions(LockRequestActions),
+    R = [#{reply_to => R} || R <- Replies],
+    case length(H) /= length(HandOverActions) of
+        true -> logger:error("wrong printing HandOverActions ~p", [HandOverActions]);
+        false -> ok
+    end,
+    case length(L) == 0 andalso maps:size(LockRequestActions) /= 0 of
+        true -> logger:error("wrong printing LockRequestActions ~p", [LockRequestActions]);
+        false -> ok
+    end,
+
+    H ++ L ++ R.
+
+print_lock_request_actions(LockRequestActions) ->
+    [#{' lock_request_to' => print_dc(Dc), lock => L, kind => K, time => print_systemtime(T)} || {Dc, As} <- maps:to_list(LockRequestActions), {L, {K, T}} <- As].
+
+-spec is_lock_process(pid(), state()) -> boolean().
+is_lock_process(Pid, State) ->
+    maps:is_key(Pid, State#state.by_pid).
 
 %% Internal functions
 
@@ -526,6 +551,7 @@ filter_waited_for_locks(Locks, State) ->
 min_lock_request_time(Lock, State) ->
     lists:min([infty] ++ [PidState#pid_state.request_time ||
         PidState <- maps:values(State#state.by_pid),
+        PidState#pid_state.is_remote == no,
         {L, {waiting, _}} <- PidState#pid_state.locks,
         L == Lock]).
 
