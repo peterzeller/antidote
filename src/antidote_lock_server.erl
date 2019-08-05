@@ -344,7 +344,7 @@ send_interdc_lock_request(OtherDcID, ReqMsg, Retries) ->
     logger:notice("send_interdc_lock_request to ~p:~n~p", [OtherDcID, ReqMsg]),
     case inter_dc_query:perform_request(?LOCK_SERVER_REQUEST, PDCID, term_to_binary(ReqMsg), fun antidote_lock_server:on_interdc_reply/2) of
         ok ->
-            logger:notice("send_interdc_lock_request to ~p ok,~n~p", [OtherDcID, ReqMsg]),
+            logger:notice("send_interdc_lock_request ok, to ~p,~n~p", [OtherDcID, ReqMsg]),
             ok;
         Err when Retries > 0 ->
             logger:warning("send_interdc_lock_request failed ~p ~p ~p ~p", [Err, OtherDcID, ReqMsg, Retries]),
@@ -357,11 +357,15 @@ send_interdc_lock_request(OtherDcID, ReqMsg, Retries) ->
 on_interdc_reply(BinaryResp, _RequestCacheEntry) ->
     logger:notice("on_interdc_reply"),
     spawn_link(fun() ->
-        {ok, Locks, SnapshotTime} = binary_to_term(BinaryResp),
-        case on_receive_remote_locks(Locks, SnapshotTime) of
-            ok -> ok;
-            {error, Reason} ->
-                logger:error("on_interdc_reply error ~p", [Reason])
+        case catch binary_to_term(BinaryResp) of
+            {ok, Locks, SnapshotTime} ->
+                case on_receive_remote_locks(Locks, SnapshotTime) of
+                    ok -> ok;
+                    {error, Reason} ->
+                        logger:error("on_interdc_reply error ~p", [Reason])
+                end;
+            Other ->
+                logger:error("on_interdc_reply unhandled message: ~p", [Other])
         end
     end).
 

@@ -64,7 +64,9 @@ request_permissions(BinaryRequest, QueryState) ->
 
 -spec request_locks(binary(), #inter_dc_query_state{}) -> ok.
 request_locks(BinaryRequest, QueryState) ->
-    ok = gen_server:cast(generate_server_name(rand_compat:uniform(?INTER_DC_QUERY_CONCURRENCY)), {request_locks, BinaryRequest, QueryState}).
+    ServerName = generate_server_name(rand_compat:uniform(?INTER_DC_QUERY_CONCURRENCY)),
+    logger:notice("inter_dc_query_response:request_locks ~p ~p", [ServerName, catch binary_to_term(BinaryRequest)]),
+    ok = gen_server:cast(ServerName, {request_locks, BinaryRequest, QueryState}).
 
 
 %% ===================================================================
@@ -92,7 +94,9 @@ handle_cast({request_permissions, BinaryRequest, QueryState}, State) ->
 
 handle_cast({request_locks, BinaryRequest, QueryState}, State) ->
     Request = binary_to_term(BinaryRequest),
+    logger:notice("inter_dc_query_response:handle_cast request_locks Request = ~p", [Request]),
     Response = antidote_lock_server:request_locks_remote(Request),
+    logger:notice("inter_dc_query_response:handle_cast request_locks Response = ~p", [Response]),
     ok = inter_dc_query_receive_socket:send_response(term_to_binary(Response), QueryState),
     {noreply, State};
 
