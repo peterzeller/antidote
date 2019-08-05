@@ -2,7 +2,7 @@
 {application, antidote,
  [
   {description, "A transactional CRDT database"},
-  {vsn, "0.2.0"},
+  {vsn, "0.2.1"},
   {registered, []},
   {applications, [
                   kernel,
@@ -10,7 +10,6 @@
                   riak_core,
                   cuttlefish,
                   erlzmq,
-                  rand_compat,
                   runtime_tools,
                   tools,
                   prometheus,

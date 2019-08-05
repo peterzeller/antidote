@@ -128,9 +128,6 @@ start_node(Name, Config) ->
     case ct_slave_ext:start(Name, NodeConfig) of
         {ok, Node} ->
 
-            % log all messages in tests:
-            ok = rpc:call(Node, logger, set_primary_config, [level, all]),
-
             ct:log("Starting riak_core"),
             ok = rpc:call(Node, application, load, [riak_core]),
 

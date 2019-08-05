@@ -32,6 +32,7 @@
 
 -include("antidote.hrl").
 -include("inter_dc_repl.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -63,9 +64,9 @@
                 id :: non_neg_integer(),
                 prepared_cache ::  cache_id(),
                 self :: atom()}).
-
+-type state() :: #state{}.
 -type read_property_list() :: [].
-
+-export_type([read_property_list/0]).
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -99,7 +100,7 @@ read_data_item({Partition, Node}, Key, Type, Transaction, PropertyList) ->
             {perform_read, Key, Type, Transaction, PropertyList}, infinity)
     catch
     _:Reason ->
-        logger:debug("Exception caught: ~p, starting read server to fix", [Reason]),
+        ?LOG_DEBUG("Exception caught: ~p, starting read server to fix", [Reason]),
         check_server_ready([{Partition, Node}]),
         read_data_item({Partition, Node}, Key, Type, Transaction, PropertyList)
     end.
@@ -164,7 +165,7 @@ start_read_servers_internal(Node, Partition, Num) ->
         {error, {already_started, _}} ->
             start_read_servers_internal(Node, Partition, Num-1);
         Err ->
-            logger:debug("Unable to start clocksi read server for ~w, will retry", [Err]),
+            ?LOG_DEBUG("Unable to start clocksi read server for ~p, will retry", [Err]),
             try
                 gen_server:call({global, generate_server_name(Node, Partition, Num)}, {go_down})
             catch
@@ -192,7 +193,7 @@ generate_server_name(Node, Partition, Id) ->
 
 -spec generate_random_server_name(node(), partition_id()) -> atom().
 generate_random_server_name(Node, Partition) ->
-    generate_server_name(Node, Partition, rand_compat:uniform(?READ_CONCURRENCY)).
+    generate_server_name(Node, Partition, rand:uniform(?READ_CONCURRENCY)).
 
 init([Partition, Id]) ->
     Addr = node(),
@@ -212,7 +213,7 @@ handle_cast({perform_read_cast, Coordinator, Key, Type, Transaction, PropertyLis
     ok = perform_read_internal(Coordinator, Key, Type, Transaction, PropertyList, SD0),
     {noreply, SD0}.
 
--spec perform_read_internal(pid(), key(), type(), #transaction{}, read_property_list(), #state{}) ->
+-spec perform_read_internal(pid(), key(), type(), tx(), read_property_list(), state()) ->
                    ok.
 perform_read_internal(Coordinator, Key, Type, Transaction, PropertyList,
               _SD0 = #state{prepared_cache = PreparedCache, partition = Partition}) ->
@@ -265,7 +266,7 @@ check_prepared_list(Key, TxLocalStartTime, [{_TxId, Time}|Rest]) ->
 
 %% @doc return:
 %%  - Reads and returns the log of specified Key using replication layer.
--spec return({fsm, pid()} | {pid(), term()}, key(), type(), #transaction{}, read_property_list(), partition_id()) -> ok.
+-spec return({fsm, pid()} | {pid(), term()}, key(), type(), tx(), read_property_list(), partition_id()) -> ok.
 return(Coordinator, Key, Type, Transaction, PropertyList, Partition) ->
     VecSnapshotTime = Transaction#transaction.vec_snapshot_time,
     TxId = Transaction#transaction.txn_id,

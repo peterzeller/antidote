@@ -58,6 +58,7 @@
 -module(antidote_hooks).
 
 -include("antidote.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -79,12 +80,12 @@
 -define(PREFIX_POST, {commit_hooks, post}).
 
 -spec register_post_hook(bucket(), module_name(), function_name()) ->
-      ok | {error, reason()}.
+      ok | {error, function_not_exported}.
 register_post_hook(Bucket, Module, Function) ->
     register_hook(?PREFIX_POST, Bucket, Module, Function).
 
 -spec register_pre_hook(bucket(), module_name(), function_name()) ->
-      ok | {error, reason()}.
+      ok | {error, function_not_exported}.
 register_pre_hook(Bucket, Module, Function) ->
     register_hook(?PREFIX_PRE, Bucket, Module, Function).
 
@@ -151,7 +152,7 @@ execute_post_commit_hook(Key, Type, Param) ->
 %% The following functions here provide commit hooks for the testing (test/commit_hook_SUITE).
 
 test_commit_hook(Object) ->
-    logger:info("Executing test commit hook"),
+    ?LOG_INFO("Executing test commit hook"),
     {ok, Object}.
 
 test_increment_hook({{Key, Bucket}, antidote_crdt_counter_pn, {increment, 1}}) ->
