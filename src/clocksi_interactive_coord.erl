@@ -111,33 +111,35 @@
 -spec generate_name(pid()) -> atom().
 generate_name(From) -> list_to_atom(pid_to_list(From) ++ "interactive_cord").
 
--spec start_link(pid(), clock_time() | ignore, txn_properties(), boolean(), [op_param()]) -> {ok, pid()}.
+-spec start_link({pid(), reference()}, clock_time() | ignore, txn_properties(), boolean(), [op_param()]) -> {ok, pid()}.
 start_link(From, Clientclock, Properties, StayAlive, Operations) ->
     case StayAlive of
         true ->
-            gen_statem:start_link({local, generate_name(From)}, ?MODULE, [From, Clientclock, Properties, StayAlive, Operations], []);
+            {Pid, _} = From,
+            gen_statem:start_link({local, generate_name(Pid)}, ?MODULE, [From, Clientclock, Properties, StayAlive, Operations], []);
         false ->
             gen_statem:start_link(?MODULE, [From, Clientclock, Properties, StayAlive, Operations], [])
     end.
 
--spec start_link(pid(), clock_time() | ignore, txn_properties(), boolean()) -> {ok, pid()}.
+-spec start_link({pid(), reference()}, clock_time() | ignore, txn_properties(), boolean()) -> {ok, pid()}.
 start_link(From, Clientclock, Properties, StayAlive) ->
     case StayAlive of
         true ->
-            gen_statem:start_link({local, generate_name(From)}, ?MODULE, [From, Clientclock, Properties, StayAlive], []);
+            {Pid, _} = From,
+            gen_statem:start_link({local, generate_name(Pid)}, ?MODULE, [From, Clientclock, Properties, StayAlive], []);
         false ->
             gen_statem:start_link(?MODULE, [From, Clientclock, Properties, StayAlive], [])
     end.
 
--spec start_link(pid(), clock_time() | ignore) -> {ok, pid()}.
+-spec start_link({pid(), reference()}, clock_time() | ignore) -> {ok, pid()}.
 start_link(From, Clientclock) ->
     start_link(From, Clientclock, antidote:get_default_txn_properties()).
 
--spec start_link(pid(), clock_time() | ignore, txn_properties()) -> {ok, pid()}.
+-spec start_link({pid(), reference()}, clock_time() | ignore, txn_properties()) -> {ok, pid()}.
 start_link(From, Clientclock, Properties) ->
     start_link(From, Clientclock, Properties, false).
 
--spec start_link(pid()) -> {ok, pid()}.
+-spec start_link({pid(), reference()}) -> {ok, pid()}.
 start_link(From) ->
     start_link(From, ignore, antidote:get_default_txn_properties()).
 
