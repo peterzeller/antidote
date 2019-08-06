@@ -58,7 +58,7 @@
 
 % how long (in milliseconds) can a local server prefer local requests over remote requests?
 % (higher values should give higher throughput but also higher latency if remote lock requests are necessary)
--define(INTER_DC_LOCK_REQUEST_DELAY, 500).
+-define(INTER_DC_LOCK_REQUEST_DELAY, 100).
 % how long to wait for locks before requesting them again
 -define(INTER_DC_RETRY_DELAY, 500).
 
@@ -149,13 +149,18 @@ request(Req, Timeout, NumTries) ->
         exit:{noproc, _} when NumTries > 0 ->
             % if there is no lock server running, start one and try again
             % we register this as a transient process directly under the antidote_sup:
-            {ok, _} = supervisor:start_child(antidote_sup, #{
+            Res = supervisor:start_child(antidote_sup, #{
                 id => lock_server,
                 start => {?MODULE, start_link, []},
                 % using a transient process, because it will be started on demand and we need
                 % to avoid conflicts with other shards who might als try to start a server
                 restart => transient
             }),
+            case Res of
+                {error, Reason} ->
+                    logger:error("Could not start antidote_lock_server:~n  ~p", [Reason]);
+                {ok, _} -> ok
+            end,
             request(Req, Timeout, NumTries - 1);
         Err:Reason:ST ->
             logger:error("Could not handle antidote_lock_server request"),
