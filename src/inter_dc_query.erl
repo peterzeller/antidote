@@ -78,7 +78,7 @@
 -spec perform_request(inter_dc_message_type(), pdcid(), binary(), fun((binary(), request_cache_entry()) -> ok))
              -> ok | unknown_dc.
 perform_request(RequestType, PDCID, BinaryRequest, Func) ->
-    logger:notice("inter_dc_query perform_request to ~p", [PDCID]),
+%%    logger:notice("inter_dc_query perform_request to ~p", [PDCID]),
     gen_server:call(?MODULE, {any_request, RequestType, PDCID, BinaryRequest, Func}, infinity).
 
 %% Adds the address of the remote DC to the list of available sockets.
@@ -166,10 +166,10 @@ handle_call({any_request, RequestType, PDCID, BinaryRequest, Func}, _From, State
         VersionBinary = ?MESSAGE_VERSION,
         ReqIdBinary = inter_dc_txn:req_id_to_bin(ReqId),
         FullRequest = <<VersionBinary/binary, ReqIdBinary/binary, RequestType, BinaryRequest/binary>>,
-        logger:notice("inter_dc_query erlzmq:send to ~p", [PDCID]),
+%%        logger:notice("inter_dc_query erlzmq:send to ~p", [PDCID]),
         case timer:tc(fun() -> erlzmq:send(Socket, FullRequest, [dontwait]) end) of
-            {Time, ok} ->
-                logger:notice("inter_dc_query erlzmq:send to ~p finished in ~pµs", [PDCID, Time]),
+            {_Time, ok} ->
+%%                logger:notice("inter_dc_query erlzmq:send to ~p finished in ~pµs", [PDCID, Time]),
                 RequestEntry = #request_cache_entry{request_type=RequestType, req_id_binary=ReqIdBinary,
                     func=Func, pdcid={DCID, SendPartition}, binary_req=FullRequest},
                 {reply, ok, req_sent(ReqIdBinary, RequestEntry, State)};
@@ -232,9 +232,9 @@ handle_info({zmq, _Socket, BinaryMsg, _Flags}, State=#state{unanswered_queries=T
         [{ReqIdBinary, CacheEntry=#request_cache_entry{request_type=RequestType, func=Func}}] ->
             case RestMsg of
                 <<RequestType, RestBinary/binary>> ->
-                    logger:notice("inter_dc_query calling on receive func ~p, ~p", [RequestType, Func]),
-                    {Time, _} = timer:tc(fun() -> Func(RestBinary, CacheEntry) end),
-                    logger:notice("inter_dc_query called on receive func ~p, ~p finished in ~pµs (size: ~p / ~p)", [RequestType, Func, Time, size(RestBinary), size(CacheEntry)]);
+%%                    logger:notice("inter_dc_query calling on receive func ~p, ~p", [RequestType, Func]),
+                    Func(RestBinary, CacheEntry);
+%%                    logger:notice("inter_dc_query called on receive func ~p, ~p finished in ~pµs (size: ~p / ~p)", [RequestType, Func, Time, size(RestBinary), size(CacheEntry)]);
                 <<?ERROR_MSG, RestBinary/binary>> ->
                     ?LOG_ERROR("Received error reply: ~p", [binary_to_term(RestBinary)]),
                     Func(RestBinary, CacheEntry);
@@ -324,10 +324,10 @@ connect_to_node([Address| Rest]) ->
 send_process(Self, Socket) ->
     receive
         {send, PDCID, RequestType, ReqIdBinary, Func, DCID, SendPartition, FullRequest, From} ->
-            logger:notice("inter_dc_query erlzmq:send to ~p", [PDCID]),
+%%            logger:notice("inter_dc_query erlzmq:send to ~p", [PDCID]),
             case timer:tc(fun() -> erlzmq:send(Socket, FullRequest, [dontwait]) end) of
-                {Time, ok} ->
-                    logger:notice("inter_dc_query erlzmq:send to ~p finished in ~pµs", [PDCID, Time]),
+                {_Time, ok} ->
+%%                    logger:notice("inter_dc_query erlzmq:send to ~p finished in ~pµs", [PDCID, Time]),
                     RequestEntry = #request_cache_entry{request_type=RequestType, req_id_binary=ReqIdBinary,
                         func=Func, pdcid={DCID, SendPartition}, binary_req=FullRequest},
                     gen_server:cast(Self, {finished_request, From, {ok, ReqIdBinary, RequestEntry}});

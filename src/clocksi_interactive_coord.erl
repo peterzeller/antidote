@@ -624,9 +624,7 @@ create_transaction_record(ClientClock, StayAlive, From, _IsStatic, Properties) -
     _Res = rand:seed(exsplus, {erlang:phash2([node()]), erlang:monotonic_time(), erlang:unique_integer()}),
     {ok, SnapshotTime} = case ClientClock of
                              ignore ->
-                                 {Time, ST} = timer:tc(fun get_snapshot_time/0),
-                                 ?LOG_NOTICE("get_snapshot_time took ~pµs", [Time]),
-                                 ST;
+                                 get_snapshot_time();
                              _ ->
                                  case antidote:get_txn_property(update_clock, Properties) of
                                      update_clock ->

@@ -335,16 +335,13 @@ asynchronous_test_helper(Node,Keys,Object,Increments,Clocks,Caller,Delay,Id)->
     ct:pal("Starting transaction ~p ~p", [Node, Increments]),
     case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
-            ct:pal("Started transaction ~p ~p", [Node, Increments]),
             ok = rpc:call(Node, antidote, update_objects,[[{Object, increment, 1}],TxId1]),
             {ok, Clock1} = rpc:call(Node, antidote, commit_transaction, [TxId1]),
             ct:pal("Committed transaction ~p ~p", [Node, Increments]),
             timer:sleep(Delay),
             asynchronous_test_helper(Node, Keys, Object,Increments-1,[Clock1|Clocks],Caller,Delay,Id);
-        {error,{error,_Missing_Locks}} ->
-            ct:pal("Error ~p ~p", [Node, Increments]),
-            timer:sleep(Delay),
-            asynchronous_test_helper(Node, Keys,Object,Increments,Clocks,Caller,Delay,Id)
+        Error ->
+            throw({failed_test, Error})
     end.
 
 
