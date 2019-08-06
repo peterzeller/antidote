@@ -62,6 +62,10 @@
 % how long to wait for locks before requesting them again
 -define(INTER_DC_RETRY_DELAY, 500).
 
+% minimum time for holding an exclusive lock after acquiring it
+% (higher values should give higher throughput and higher tail latencies)
+-define(MinExclusiveLockDuration, 500).
+
 % how long (in milliseconds) may a transaction take to acquire the necessary locks?
 -define(LOCK_REQUEST_TIMEOUT, 20000).
 -define(LOCK_REQUEST_RETRIES, 3).
@@ -189,7 +193,7 @@ init([]) ->
     spawn_link(fun() ->
         check_lock_state_process(Self)
     end),
-    {ok, antidote_lock_server_state:initial(MyDcId)}.
+    {ok, antidote_lock_server_state:initial(MyDcId, ?MinExclusiveLockDuration)}.
 
 check_lock_state_process(Pid) ->
     timer:sleep(100),

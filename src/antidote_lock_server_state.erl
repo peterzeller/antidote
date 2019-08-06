@@ -39,7 +39,7 @@
 -export_type([state/0, lock_request_actions/0, actions/0]).
 
 -export([
-    initial/1,
+    initial/2,
     my_dc_id/1,
     new_request/7, new_remote_request/6, on_remote_locks_received/5, remove_locks/4, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/4, print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_request_actions/1, is_lock_process/2, get_remote_waiting_locks/1]).
 
@@ -71,7 +71,10 @@
     by_pid = #{} :: #{pid() => #pid_state{}},
     timer_Active = false :: boolean(),
     % for each exclusive lock we have: the time when we acquired it
-    exclusive_locks = #{} :: #{antidote_locks:lock() => integer()}
+    exclusive_locks = #{} :: #{antidote_locks:lock() => integer()},
+    % minimal time (in ms) for holding an exclusive lock
+    % (higher value increases throughput and latency)
+    min_exclusive_lock_duration :: integer()
 }).
 
 -opaque state() :: #state{}.
@@ -96,10 +99,11 @@
 
 %% Public API:
 
--spec initial(dcid()) -> state().
-initial(MyDcId) -> #state{
+-spec initial(dcid(), integer()) -> state().
+initial(MyDcId, MinExclusiveLockDuration) -> #state{
     dc_id = MyDcId,
-    by_pid = #{}
+    by_pid = #{},
+    min_exclusive_lock_duration = MinExclusiveLockDuration
 }.
 
 -spec my_dc_id(state()) -> dcid().
@@ -326,7 +330,7 @@ try_acquire_lock_list(CurrentTime, Pid, LockStates, IsRemote, RequestTime, Chang
                                 {yes, DcId} ->
                                     not is_waiting_remote_exclusive(Lock, RequestTime, DcId, State)
                                     % keep exclusive locks for at least X ms
-                                    andalso maps:get(Lock, State#state.exclusive_locks, 0) + 500 =< CurrentTime
+                                    andalso maps:get(Lock, State#state.exclusive_locks, 0) + State#state.min_exclusive_lock_duration =< CurrentTime
                             end,
                     case CanAcquireLock of
                         true ->
@@ -664,7 +668,7 @@ max_lock_kind_test() ->
 
 
 shared_lock_ok_test() ->
-    S1 = initial(dc1),
+    S1 = initial(dc1, 0),
     R1 = {p1, t1},
     {Actions, _S2} = new_request(R1, 10, 1, undefined, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc2, dc3 => dc3}}], S1),
     {HandOverActions, LockRequestActions, Replies} = Actions,
@@ -674,7 +678,7 @@ shared_lock_ok_test() ->
     ok.
 
 shared_lock_fail_test() ->
-    S1 = initial(dc1),
+    S1 = initial(dc1, 0),
     R1 = {p1, t1},
     % data center 3 has our lock, so we need to request it
     {Actions, _S2} = new_request(R1, 10, 1, undefined, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc3, dc2 => dc2, dc3 => dc3}}], S1),
@@ -685,7 +689,7 @@ shared_lock_fail_test() ->
     ok.
 
 shared_lock_fail2_test() ->
-    S1 = initial(dc1),
+    S1 = initial(dc1, 0),
     R1 = {p1, t1},
     % data center 3 has our lock, so we need to request it
     {Actions, _S2} = new_request(R1, 10, 1, undefined, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc3, dc2 => dc1, dc3 => dc3}}], S1),
@@ -697,7 +701,7 @@ shared_lock_fail2_test() ->
 
 
 shared_lock_missing_local_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     R1 = {p1, t1},
     % data center 3 has our lock, so we need to request it
     {Actions1, S1} = new_request(R1, 10, 1, undefined, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc3, dc2 => dc1, dc3 => dc3}}], SInit),
@@ -709,7 +713,7 @@ shared_lock_missing_local_test() ->
     ok.
 
 exclusive_lock_missing_local_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     R1 = {p1, t1},
     % data centers 2 and 3 have the locks, so we need to request it
     {Actions1, S1} = new_request(R1, 10, 1, undefined, [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc3, dc2 => dc2, dc3 => dc2}}], SInit),
@@ -725,7 +729,7 @@ exclusive_lock_missing_local_test() ->
     ok.
 
 exclusive_lock_missing_local2_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     R1 = {p1, t1},
     % data centers 2 and 3 have the locks, so we need to request it
     Locks = [
@@ -752,7 +756,7 @@ exclusive_lock_missing_local2_test() ->
 
 
 shared_locks_missing_local_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     R1 = {p1, t1},
     % data center 2 has our lock2, so we need to request it
     RLocks = [
@@ -770,7 +774,7 @@ shared_locks_missing_local_test() ->
 
 
 snapshot_time_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     VC1 = vectorclock:from_list([{dc2, 5}, {dc3, 10}]),
     VC2 = vectorclock:from_list([{dc2, 8}, {dc3, 10}]),
     VC3 = vectorclock:from_list([{dc2, 8}, {dc3, 12}]),
@@ -798,7 +802,7 @@ snapshot_time_test() ->
     ok.
 
 exclusive_lock_ok_test() ->
-    S1 = initial(dc1),
+    S1 = initial(dc1, 0),
     R1 = {p1, t1},
     {Actions, _S2} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], S1),
     {HandOverActions, LockRequestActions, Replies} = Actions,
@@ -809,7 +813,7 @@ exclusive_lock_ok_test() ->
 
 
 exclusive_lock_fail_test() ->
-    S1 = initial(dc1),
+    S1 = initial(dc1, 0),
     R1 = {p1, t1},
     {Actions, _S2} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc2}}], S1),
     {HandOverActions, LockRequestActions, Replies} = Actions,
@@ -820,7 +824,7 @@ exclusive_lock_fail_test() ->
 
 
 two_shared_locks_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     % first R1 tries to acquire lock1
     R1 = {p1, t1},
     {Actions1, S1} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc2, dc3 => dc3}}], SInit),
@@ -840,7 +844,7 @@ two_shared_locks_test() ->
     ok.
 
 two_exclusive_locks_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     % first R1 tries to acquire lock1
     R1 = {p1, t1},
     {Actions1, S1} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], SInit),
@@ -872,7 +876,7 @@ two_exclusive_locks_test() ->
     ok.
 
 shared_lock_with_remote_shared_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     % first R1 tries to acquire lock1
     R1 = {p1, t1},
     {Actions1, S1} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc3}}], SInit),
@@ -885,7 +889,7 @@ shared_lock_with_remote_shared_test() ->
     ok.
 
 shared_lock_with_remote_exclusive_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     % first R1 tries to acquire lock1
     R1 = {p1, t1},
     {Actions1, S1} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc3}}], SInit),
@@ -902,7 +906,7 @@ shared_lock_with_remote_exclusive_test() ->
     ok.
 
 shared_lock_with_remote_exclusive_duplicate_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     % first R1 tries to acquire lock1
     R1 = {p1, t1},
     {Actions1, S1} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc3}}], SInit),
@@ -929,7 +933,7 @@ shared_lock_with_remote_exclusive_duplicate_test() ->
 
 
 exclusive_lock_with_remote_shared_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     % first R1 tries to acquire lock1
     R1 = {p1, t1},
     {Actions1, S1} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], SInit),
@@ -947,7 +951,7 @@ exclusive_lock_with_remote_shared_test() ->
 
 
 exclusive_lock_future_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
 
     % remote DC2 tries to acquire the lock
     R2 = {p2, t2},
@@ -965,7 +969,7 @@ exclusive_lock_future_test() ->
     ok.
 
 exclusive_lock_with_remote_exclusive_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     % first R1 tries to acquire lock1
     R1 = {p1, t1},
     {Actions1, S1} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], SInit),
@@ -983,7 +987,7 @@ exclusive_lock_with_remote_exclusive_test() ->
 
 
 exclusive_lock_with_remote_exclusive_later_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     % first R1 tries to acquire lock1, waiting on remote
     R1 = {p1, t1},
     {Actions1, S1} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc2, dc3 => dc3}}], SInit),
@@ -998,7 +1002,7 @@ exclusive_lock_with_remote_exclusive_later_test() ->
     ok.
 
 exclusive_lock_with_remote_exclusive_earlier_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     % first R1 tries to acquire lock1, waiting on remote
     R1 = {p1, t1},
     {Actions1, S1} = new_request(R1, 30, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc2, dc3 => dc3}}], SInit),
@@ -1013,7 +1017,7 @@ exclusive_lock_with_remote_exclusive_earlier_test() ->
     ok.
 
 locks_request_again_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     % first R1 tries to acquire lock1
     R1 = {p1, t1},
     {Actions1, S1} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], SInit),
@@ -1050,7 +1054,7 @@ missing_locks_by_dc_empty_test() ->
 
 
 locks_missing_local_retry_test() ->
-    SInit = initial(dc1),
+    SInit = initial(dc1, 0),
     R1 = {p1, t1},
     % data center 2 has our lock2, so we need to request it
     RLocks1 = [
