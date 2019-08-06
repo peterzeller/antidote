@@ -185,7 +185,40 @@ init([]) ->
     % we want to be notified if a transaction holding locks crashes
     process_flag(trap_exit, true),
     MyDcId = dc_meta_data_utilities:get_my_dc_id(),
+    Self = self(),
+    spawn_link(fun() ->
+        check_lock_state_process(Self)
+    end),
     {ok, antidote_lock_server_state:initial(MyDcId)}.
+
+check_lock_state_process(Pid) ->
+    timer:sleep(100),
+    {ok, Locks} = gen_server:call(Pid, get_remote_waiting_locks),
+
+    LockObjects = antidote_lock_crdt:get_lock_objects([{L, shared} || L <- Locks]),
+    case LockObjects of
+        [] ->
+            timer:sleep(100);
+        _ ->
+
+            case antidote:read_objects(ignore, [], LockObjects) of
+                {error, Reason} ->
+                    % this could happen if the shards containing the locks are down
+                    % if we cannot read the locks we fail immediately since waiting
+                    % would probably take too much time
+                    logger:error("check_lock_state_process: Could not obtain locks:~n~p", [Reason]),
+                    ok;
+                {ok, LockValuesRaw, ReadClock} ->
+                    LockValues = [antidote_lock_crdt:parse_lock_value(V) || V <- LockValuesRaw],
+                    LockEntries = lists:zip(Locks, LockValues),
+                    logger:notice("check_lock_state_process, LockEntries = ~n~p", [LockEntries]),
+                    gen_server:cast(Pid, #on_receive_remote_locks2{lock_entries = LockEntries, read_clock = ReadClock})
+            end
+    end,
+
+    %repeat
+    check_lock_state_process(Pid).
+
 
 handle_call(Req, From, State) ->
     logger:notice("handle_call~n  Req = ~p~n  State = ~p", [Req, antidote_lock_server_state:print_state(State)]),
@@ -213,7 +246,9 @@ handle_call2(#release_locks{commit_time = CommitTime}, From, State) ->
 handle_call2(#request_locks_remote{}=Req, From, State) ->
     handle_request_locks_remote(Req, From, State);
 handle_call2(#on_receive_remote_locks{snapshot_time = SnapshotTime, locks = Locks}, _From, State) ->
-    handle_on_receive_remote_locks(Locks, SnapshotTime, State).
+    handle_on_receive_remote_locks(Locks, SnapshotTime, State);
+handle_call2(get_remote_waiting_locks, _From, State) ->
+    {reply, {ok, antidote_lock_server_state:get_remote_waiting_locks(State)}, State}.
 
 handle_cast2(start_interdc_lock_requests_timer, State) ->
     AlreadyActive = antidote_lock_server_state:get_timer_active(State),

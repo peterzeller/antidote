@@ -62,7 +62,8 @@
 -record(state, {
   sockets :: dict:dict(dcid(), erlzmq:erlzmq_socket()), % DCID -> socket
   req_id :: non_neg_integer(),
-  unanswered_queries :: ets:tid() % PDCID -> query
+  unanswered_queries :: ets:tid(), % PDCID -> query
+  send_process :: #{dcid() => pid()}
 }).
 
 %%%% API --------------------------------------------------------------------+
@@ -91,7 +92,12 @@ del_dc(DCID) -> gen_server:call(?MODULE, {del_dc, DCID}, ?COMM_TIMEOUT).
 %%%% Server methods ---------------------------------------------------------+
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-init([]) -> {ok, #state{sockets = dict:new(), req_id = 1, unanswered_queries = ets:new(queries, [set])}}.
+init([]) -> {ok, #state{
+    sockets = dict:new(),
+    req_id = 1,
+    unanswered_queries = ets:new(queries, [set]),
+    send_process = #{}
+}}.
 
 %% Handle the instruction to add a new DC.
 handle_call({add_dc, DCID, LogReaders}, _From, OldState) ->
@@ -99,23 +105,27 @@ handle_call({add_dc, DCID, LogReaders}, _From, OldState) ->
     %% The DC will contain a list of ip/ports each with a list of partition ids loacated at each node
     %% This will connect to each node and store in the cache the list of partitions located at each node
     %% so that a request goes directly to the node where the needed partition is located
+    Self = self(),
     {_, State} = del_dc(DCID, OldState),
     {Result, NewState} =
     lists:foldl(fun({PartitionList, AddressList}, {ResultAcc, AccState}) ->
                     case connect_to_node(AddressList) of
                         {ok, Socket} ->
                             DCPartitionDict =
-                            case dict:find(DCID, AccState#state.sockets) of
-                                {ok, Val} ->
-                                    Val;
-                                error ->
-                                    dict:new()
-                            end,
+                                case dict:find(DCID, AccState#state.sockets) of
+                                    {ok, Val} ->
+                                        Val;
+                                    error ->
+                                        dict:new()
+                                end,
                             NewDCPartitionDict =
-                            lists:foldl(fun(Partition, Acc) ->
-                                            dict:store(Partition, Socket, Acc)
-                                        end, DCPartitionDict, PartitionList),
-                            NewAccState = AccState#state{sockets = dict:store(DCID, NewDCPartitionDict, AccState#state.sockets)},
+                                lists:foldl(fun(Partition, Acc) ->
+                                    dict:store(Partition, Socket, Acc)
+                                end, DCPartitionDict, PartitionList),
+                            NewAccState = AccState#state{
+                                sockets = dict:store(DCID, NewDCPartitionDict, AccState#state.sockets),
+                                send_process = maps:put(DCID, spawn_link(fun() -> send_process(Self, Socket) end), AccState#state.send_process)
+                            },
                             F = fun({_ReqId, #request_cache_entry{binary_req=Request, pdcid={QDCID, Partition}}}, _Acc) ->
                                     %% if there are unanswered queries that were sent to the DC we just connected with, resend them
                                     case ((QDCID == DCID) and lists:member(Partition, PartitionList)) of
@@ -173,6 +183,39 @@ handle_call({any_request, RequestType, PDCID, BinaryRequest, Func}, _From, State
         {reply, unknown_dc, State}
     end.
 
+%%%% Handle an instruction to ask a remote DC.
+%%handle_call({any_request, RequestType, PDCID, BinaryRequest, Func}, From, State=#state{req_id=ReqId}) ->
+%%    {DCID, Partition} = PDCID,
+%%    case dict:find(DCID, State#state.sockets) of
+%%        %% If socket found
+%%        %% Find the socket that is responsible for this partition
+%%        {ok, DCPartitionDict} ->
+%%            {SendPartition, _Socket} = case dict:find(Partition, DCPartitionDict) of
+%%                {ok, Soc} ->
+%%                    {Partition, Soc};
+%%                error ->
+%%                    %% If you don't see this parition at the DC, just take the first
+%%                    %% socket from this DC
+%%                    %% Maybe should use random??
+%%                    hd(dict:to_list(DCPartitionDict))
+%%            end,
+%%            %% Build the binary request
+%%            VersionBinary = ?MESSAGE_VERSION,
+%%            ReqIdBinary = inter_dc_txn:req_id_to_bin(ReqId),
+%%            FullRequest = <<VersionBinary/binary, ReqIdBinary/binary, RequestType, BinaryRequest/binary>>,
+%%            case maps:find(DCID, State#state.send_process) of
+%%                {ok, SendProcess} ->
+%%                    SendProcess ! {send, PDCID, RequestType, ReqIdBinary, Func, DCID, SendPartition, FullRequest, From};
+%%                error ->
+%%                    logger:error("Could not find send_process for ~p", [DCID])
+%%            end,
+%%            {noreply, State};
+%%        %% If socket not found
+%%        _ ->
+%%            logger:error("Unknown DC ~p~n  known dcs = ~p", [DCID, dict:fetch_keys(State#state.sockets)]),
+%%            {reply, unknown_dc, State}
+%%    end.
+
 close_dc_sockets(DCPartitionDict) ->
     F = fun({_, Socket}) ->
             (catch zmq_utils:close_socket(Socket)) end,
@@ -203,6 +246,9 @@ handle_info({zmq, _Socket, BinaryMsg, _Flags}, State=#state{unanswered_queries=T
         [] ->
             ?LOG_ERROR("Got a bad (or repeated) request id: ~p", [ReqIdBinary])
     end,
+    {noreply, State};
+handle_info(Req, State) ->
+    logger:error("inter_dc_query:handle_info unhandled request: ~p", [Req]),
     {noreply, State}.
 
 terminate(_Reason, State) ->
@@ -211,14 +257,30 @@ terminate(_Reason, State) ->
     lists:foreach(F, dict:to_list(State#state.sockets)),
     ok.
 
-handle_cast(_Request, State) -> {noreply, State}.
+
+handle_cast({finished_request, From, Reply}, State) ->
+    case Reply of
+        {ok, ReqIdBinary, RequestEntry} ->
+            gen_server:reply(From, ok),
+            {noreply, req_sent(ReqIdBinary, RequestEntry, State)};
+        {error, Err} ->
+            gen_server:reply(From, {error, Err}),
+            {noreply, State}
+    end;
+handle_cast(_Request, State) ->
+    logger:error("handle_cast: unhandled ~p", [_Request]),
+    {noreply, State}.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 del_dc(DCID, State) ->
     case dict:find(DCID, State#state.sockets) of
         {ok, DCPartitionDict} ->
             ok = close_dc_sockets(DCPartitionDict),
-            {ok, State#state{sockets = dict:erase(DCID, State#state.sockets)}};
+            maps:get(DCID, State#state.send_process) ! stop,
+            {ok, State#state{
+                sockets = dict:erase(DCID, State#state.sockets),
+                send_process = maps:remove(DCID, State#state.send_process)
+            }};
         error ->
             {ok, State}
     end.
@@ -256,4 +318,27 @@ connect_to_node([Address| Rest]) ->
             {ok, Socket};
         _ ->
             connect_to_node(Rest)
+    end.
+
+
+send_process(Self, Socket) ->
+    receive
+        {send, PDCID, RequestType, ReqIdBinary, Func, DCID, SendPartition, FullRequest, From} ->
+            logger:notice("inter_dc_query erlzmq:send to ~p", [PDCID]),
+            case timer:tc(fun() -> erlzmq:send(Socket, FullRequest, [dontwait]) end) of
+                {Time, ok} ->
+                    logger:notice("inter_dc_query erlzmq:send to ~p finished in ~pµs", [PDCID, Time]),
+                    RequestEntry = #request_cache_entry{request_type=RequestType, req_id_binary=ReqIdBinary,
+                        func=Func, pdcid={DCID, SendPartition}, binary_req=FullRequest},
+                    gen_server:cast(Self, {finished_request, From, {ok, ReqIdBinary, RequestEntry}});
+                {_Time, Err} ->
+                    logger:error("inter_dc_query erlzmq:send to ~p failed: ~p", [PDCID, Err]),
+                    gen_server:cast(Self, {finished_request, From, {error, Err}})
+            end,
+            send_process(Self, Socket);
+        stop ->
+            ok;
+        Other ->
+            logger:error("send_process: unhandled message: ~p", [Other]),
+            send_process(Self, Socket)
     end.

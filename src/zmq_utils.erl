@@ -38,7 +38,7 @@ create_socket(Type, Active) ->
   end,
   case Result of
     {ok, Socket} ->
-        erlzmq:setsockopt(Socket, sndtimeo, 1000),
+        ok = erlzmq:setsockopt(Socket, sndtimeo, 1000),
         Socket;
     _ -> throw(failed_to_create_zmq_socket)
   end.

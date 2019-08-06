@@ -41,7 +41,7 @@
 -export([
     initial/1,
     my_dc_id/1,
-    new_request/7, new_remote_request/5, on_remote_locks_received/4, remove_locks/3, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/4, print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_request_actions/1, is_lock_process/2]).
+    new_request/7, new_remote_request/5, on_remote_locks_received/4, remove_locks/3, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/4, print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_request_actions/1, is_lock_process/2, get_remote_waiting_locks/1]).
 
 
 % state invariants:
@@ -292,10 +292,14 @@ add_process(Requester, RequestTime, IsRemote, Locks, State) ->
 %% Precondition: all required locks are available locally
 -spec try_acquire_locks(pid(), state()) -> {boolean(), state()}.
 try_acquire_locks(Pid, State) ->
-    {ok, PidState} = maps:find(Pid, State#state.by_pid),
-    LockStates = PidState#pid_state.locks,
-    IsRemote = PidState#pid_state.is_remote,
-    try_acquire_lock_list(Pid, LockStates, IsRemote, PidState#pid_state.request_time, false, State).
+    case maps:find(Pid, State#state.by_pid) of
+        {ok, PidState} ->
+            LockStates = PidState#pid_state.locks,
+            IsRemote = PidState#pid_state.is_remote,
+            try_acquire_lock_list(Pid, LockStates, IsRemote, PidState#pid_state.request_time, false, State);
+        error ->
+            {false, State}
+    end.
 
 -spec try_acquire_lock_list(pid(), orddict:orddict(antidote_locks:lock(), lock_state_with_kind()), {yes, dcid()} | no, integer(), boolean(), state()) -> {boolean(), state()}.
 try_acquire_lock_list(Pid, LockStates, IsRemote, RequestTime, Changed, State) ->
@@ -505,6 +509,11 @@ next_actions(State) ->
         end
     end, {{[], #{}, []}, State}, Pids).
 
+-spec get_remote_waiting_locks(state()) -> ordsets:ordset(antidote_locks:lock()).
+get_remote_waiting_locks(State) ->
+    PidStates = maps:values(State#state.by_pid),
+    Locks = lists:flatmap(fun(P) -> [L || {L, {waiting_remote, _}} <- P#pid_state.locks] end, PidStates),
+    ordsets:from_list(Locks).
 
 
 compare_by_request_time({Pid1, PidState1}, {Pid2, PidState2}) ->
@@ -517,13 +526,16 @@ compare_by_request_time({Pid1, PidState1}, {Pid2, PidState2}) ->
 -spec change_waiting_locks_to_remote([antidote_locks:lock()], state()) -> state().
 change_waiting_locks_to_remote(Locks, State) ->
     State#state{
-        by_pid = maps:map(fun(_Pid, PidState) ->
-            PidState#pid_state{
-                locks = [case LockState == waiting andalso lists:member(Lock, Locks) of
-                    true -> {Lock, {waiting_remote, LockKind}};
-                    false -> L
-                end || L = {Lock, {LockState, LockKind}} <- PidState#pid_state.locks  ]
-            }
+        by_pid = maps:map(fun
+            (_Pid, PidState = #pid_state{is_remote = {yes, _}}) ->
+                PidState;
+            (_Pid, PidState) ->
+                PidState#pid_state{
+                    locks = [case LockState == waiting andalso lists:member(Lock, Locks) of
+                        true -> {Lock, {waiting_remote, LockKind}};
+                        false -> L
+                    end || L = {Lock, {LockState, LockKind}} <- PidState#pid_state.locks  ]
+                }
         end, State#state.by_pid)
     }.
 
@@ -544,7 +556,10 @@ merge_actions({H1, L1, R1}, {H2, L2, R2}) ->
 %
 -spec filter_waited_for_locks([antidote_locks:lock()], state()) -> lock_request_actions_for_dc().
 filter_waited_for_locks(Locks, State) ->
-    [{L, {Kind, min_lock_request_time(L, State)}} || L <- Locks, (Kind = max_lock_waiting_kind(L, State)) /= none].
+    [{L, {Kind, MinTime}} ||
+        L <- Locks,
+        (Kind = max_lock_waiting_kind(L, State)) /= none,
+        (MinTime = min_lock_request_time(L, State)) < infty].
 
 % returns the minimum time of a local request waiting for this lock
 -spec min_lock_request_time(antidote_locks:lock(), state()) -> integer() | infty.
@@ -684,10 +699,12 @@ exclusive_lock_missing_local2_test() ->
     ],
     {Actions1, S1} = new_request(R1, 10, 1, undefined, [dc1, dc2, dc3], Locks, SInit),
     ?assertEqual({[], #{dc2 => [{lock1, {exclusive, 11}}, {lock2, {exclusive, 11}}], dc3 => [{lock1, {exclusive, 11}}, {lock2, {exclusive, 11}}]}, []}, Actions1),
+    ?assertEqual([lock1, lock2], get_remote_waiting_locks(S1)),
 
     % first we only get lock 2
     {Actions2, S2} = on_remote_locks_received(undefined, [dc1, dc2, dc3], [{{lock2, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], S1),
     ?assertEqual({[], #{}, []}, Actions2),
+    ?assertEqual([lock1], get_remote_waiting_locks(S2)),
 
     % when we have all the locks, we can acquire the lock
     ReceivedLocks = [
@@ -848,6 +865,32 @@ shared_lock_with_remote_exclusive_test() ->
     {Actions3, _S3} = remove_locks(p1, vectorclock:new(), S2),
     ?assertEqual({[{[{lock1,exclusive}],dc2,{p2,t2}}], #{}, [R2]}, Actions3),
     ok.
+
+shared_lock_with_remote_exclusive_duplicate_test() ->
+    SInit = initial(dc1),
+    % first R1 tries to acquire lock1
+    R1 = {p1, t1},
+    {Actions1, S1} = new_request(R1, 10, 1, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc3}}], SInit),
+    ?assertEqual({[], #{}, [R1]}, Actions1),
+
+    % then remote DC2 tries to acquire the same lock
+    R2 = {p2, t2},
+    {Actions2, S2} = new_remote_request(R2, 20, [{lock1, exclusive}], dc2, S1),
+    ?assertEqual({[], #{}, []}, Actions2),
+
+    % and (because of a timeout) it tries to acquire the lock once more
+    R3 = {p3, t3},
+    {Actions3, S3} = new_remote_request(R3, 20, [{lock1, exclusive}], dc2, S2),
+    ?assertEqual({[], #{}, []}, Actions3),
+
+    % when R1 releases it's lock, the remote gets it
+    {Actions4, _S4} = remove_locks(p1, vectorclock:new(), S3),
+    ?assertEqual({[
+        {[{lock1,exclusive}],dc2,{p2,t2}},
+        {[{lock1,exclusive}],dc2,{p3,t3}}
+    ], #{}, [R2, R3]}, Actions4),
+    ok.
+
 
 
 exclusive_lock_with_remote_shared_test() ->

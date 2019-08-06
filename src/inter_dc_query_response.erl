@@ -35,7 +35,7 @@
 -export([start_link/1,
     get_entries/2,
     request_permissions/2,
-    generate_server_name/1, request_locks/2]).
+    generate_server_name/1, request_locks/2, system_test/2]).
 -export([init/1,
          handle_cast/2,
          handle_call/3,
@@ -68,6 +68,12 @@ request_locks(BinaryRequest, QueryState) ->
     logger:notice("inter_dc_query_response:request_locks ~p ~p", [ServerName, catch binary_to_term(BinaryRequest)]),
     ok = gen_server:cast(ServerName, {request_locks, BinaryRequest, QueryState}).
 
+-spec system_test(binary(), #inter_dc_query_state{}) -> ok.
+system_test(BinaryRequest, QueryState) ->
+    ServerName = generate_server_name(rand_compat:uniform(?INTER_DC_QUERY_CONCURRENCY)),
+    logger:notice("inter_dc_query_response:system_test ~p ~p", [ServerName, catch binary_to_term(BinaryRequest)]),
+    ok = gen_server:cast(ServerName, {system_test, BinaryRequest, QueryState}).
+
 
 %% ===================================================================
 %% gen_server callbacks
@@ -95,9 +101,18 @@ handle_cast({request_permissions, BinaryRequest, QueryState}, State) ->
 handle_cast({request_locks, BinaryRequest, QueryState}, State) ->
     Request = binary_to_term(BinaryRequest),
     logger:notice("inter_dc_query_response:handle_cast request_locks Request = ~p", [Request]),
-    Response = antidote_lock_server:request_locks_remote(Request),
-    logger:notice("inter_dc_query_response:handle_cast request_locks Response = ~p", [Response]),
-    ok = inter_dc_query_receive_socket:send_response(term_to_binary(Response), QueryState),
+    spawn_link(fun() ->
+        Response = antidote_lock_server:request_locks_remote(Request),
+        logger:notice("inter_dc_query_response:handle_cast request_locks Response = ~p", [Response])
+    end),
+    {_, _, _, Locks} = Request,
+    ok = inter_dc_query_receive_socket:send_response(term_to_binary({ok, Locks, vectorclock:new()}), QueryState),
+    {noreply, State};
+
+handle_cast({system_test, BinaryRequest, QueryState}, State) ->
+    Request = binary_to_term(BinaryRequest),
+    logger:notice("inter_dc_query_response:handle_cast system_test Request = ~p", [Request]),
+    ok = inter_dc_query_receive_socket:send_response(term_to_binary({ok, Request}), QueryState),
     {noreply, State};
 
 handle_cast(_Info, State) ->
