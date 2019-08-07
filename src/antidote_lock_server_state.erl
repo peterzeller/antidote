@@ -59,7 +59,6 @@
 -record(pid_state, {
     locks :: orddict:orddict(antidote_locks:lock(), lock_state_with_kind()),
     request_time :: integer(),
-    is_remote :: {yes, dcid()} | no,
     requester :: requester()
 }).
 
@@ -69,6 +68,8 @@
     %% latest snapshot,
     snapshot_time = vectorclock:new() :: snapshot_time(),
     by_pid = #{} :: #{pid() => #pid_state{}},
+    % for each lock: remote data centers who want this lock
+    remote_requests = #{} :: #{antidote_locks:lock() => #{dcid() => {RequestTime :: integer(),  antidote_locks:lock_kind()}}},
     timer_Active = false :: boolean(),
     % for each exclusive lock we have: the time when we acquired it
     exclusive_locks = #{} :: #{antidote_locks:lock() => integer()},
@@ -236,8 +237,7 @@ print_exclusive_locks(M) ->
 print_pid_state(PidState) ->
     #{
         lock => maps:from_list(PidState#pid_state.locks),
-        request_time => print_systemtime(PidState#pid_state.request_time),
-        is_remote => PidState#pid_state.is_remote
+        request_time => print_systemtime(PidState#pid_state.request_time)
     }.
 
 print_vc(Vc) ->
