@@ -35,7 +35,7 @@
 -export([start_link/1,
     get_entries/2,
     request_permissions/2,
-    generate_server_name/1, request_locks/2, system_test/2]).
+    generate_server_name/1, on_lock_server_request/2, system_test/2]).
 -export([init/1,
          handle_cast/2,
          handle_call/3,
@@ -62,10 +62,10 @@ get_entries(BinaryQuery, QueryState) ->
 request_permissions(BinaryRequest, QueryState) ->
     ok = gen_server:cast(generate_server_name(rand:uniform(?INTER_DC_QUERY_CONCURRENCY)), {request_permissions, BinaryRequest, QueryState}).
 
--spec request_locks(binary(), #inter_dc_query_state{}) -> ok.
-request_locks(BinaryRequest, QueryState) ->
+-spec on_lock_server_request(binary(), #inter_dc_query_state{}) -> ok.
+on_lock_server_request(BinaryRequest, QueryState) ->
     ServerName = generate_server_name(rand_compat:uniform(?INTER_DC_QUERY_CONCURRENCY)),
-    ok = gen_server:cast(ServerName, {request_locks, BinaryRequest, QueryState}).
+    ok = gen_server:cast(ServerName, {lock_server_request, BinaryRequest, QueryState}).
 
 -spec system_test(binary(), #inter_dc_query_state{}) -> ok.
 system_test(BinaryRequest, QueryState) ->
@@ -96,13 +96,10 @@ handle_cast({request_permissions, BinaryRequest, QueryState}, State) ->
     ok = inter_dc_query_receive_socket:send_response(BinaryResp, QueryState),
     {noreply, State};
 
-handle_cast({request_locks, BinaryRequest, QueryState}, State) ->
+handle_cast({lock_server_request, BinaryRequest, QueryState}, State) ->
     Request = binary_to_term(BinaryRequest),
-    spawn_link(fun() ->
-        antidote_lock_server:request_locks_remote(Request)
-    end),
-    {_, _, _, Locks} = Request,
-    ok = inter_dc_query_receive_socket:send_response(term_to_binary({ok, Locks, vectorclock:new()}), QueryState),
+    Response = antidote_lock_server:on_interdc_request(Request),
+    ok = inter_dc_query_receive_socket:send_response(term_to_binary(Response), QueryState),
     {noreply, State};
 
 handle_cast({system_test, BinaryRequest, QueryState}, State) ->

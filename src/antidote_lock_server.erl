@@ -46,7 +46,7 @@
 
 
 %% API
--export([start_link/0, request_locks/2, request_locks_remote/1, release_locks/2, on_interdc_reply/2]).
+-export([start_link/0, request_locks/2, release_locks/2, on_interdc_reply/2, on_interdc_request/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -82,6 +82,7 @@
 -type lock_crdt_value() :: #{dcid() => dcid()}.
 -type requester() :: {pid(), Tag :: term()}.
 
+%% Messages sent to the server:
 
 -record(request_locks, {
     client_clock :: snapshot_time(),
@@ -135,12 +136,6 @@ request_locks(ClientClock, Locks) ->
 release_locks(CommitTime, Locks) ->
     request(#release_locks{commit_time = CommitTime, locks = Locks}, infinity, 0).
 
--spec on_receive_remote_locks(antidote_locks:lock_spec(), snapshot_time()) -> ok | {error, any()}.
-on_receive_remote_locks(Locks, SnapshotTime) ->
-%%    logger:notice("on_receive_remote_locks Locks = ~p~n  SnapshotTime = ~p", [Locks, antidote_lock_server_state:print_vc(SnapshotTime)]),
-    request(#on_receive_remote_locks{snapshot_time = SnapshotTime, locks = Locks}, infinity, 0).
-
-
 % sends a request to the global gen-server instance, starting it if necessary
 request(Req, Timeout, NumTries) ->
     try
@@ -180,9 +175,12 @@ request(Req, Timeout, NumTries) ->
     end.
 
 % called in inter_dc_query_response
--spec request_locks_remote(#request_locks_remote{}) -> ok | {error, Reason :: any()}.
-request_locks_remote(Req) ->
-    request(Req, infinity, 3).
+-spec on_interdc_request(#request_locks_remote{} | #on_receive_remote_locks{}) -> ok.
+on_interdc_request(Request) ->
+    spawn_link(fun() ->
+        request(Request, infinity, 3)
+    end),
+    ok.
 
 
 
@@ -381,7 +379,7 @@ send_interdc_lock_requests(RequestsByDc, MyDcID) ->
         end, ok, ByTime)
     end, ok, RequestsByDc).
 
--spec send_interdc_lock_request(dcid(), #request_locks_remote{}, integer()) -> ok.
+-spec send_interdc_lock_request(dcid(), #request_locks_remote{} | #on_receive_remote_locks{}, integer()) -> ok.
 send_interdc_lock_request(OtherDcID, ReqMsg, Retries) ->
     {LocalPartition, _} = log_utilities:get_key_partition(locks),
     PDCID = {OtherDcID, LocalPartition},
@@ -399,19 +397,9 @@ send_interdc_lock_request(OtherDcID, ReqMsg, Retries) ->
     end.
 
 on_interdc_reply(BinaryResp, _RequestCacheEntry) ->
-%%    logger:notice("on_interdc_reply"),
-    spawn_link(fun() ->
-        case catch binary_to_term(BinaryResp) of
-            {ok, Locks, SnapshotTime} ->
-                case on_receive_remote_locks(Locks, SnapshotTime) of
-                    ok -> ok;
-                    {error, Reason} ->
-                        logger:error("on_interdc_reply error ~p", [Reason])
-                end;
-            Other ->
-                logger:error("on_interdc_reply unhandled message: ~p", [Other])
-        end
-    end).
+    % Nothing to do here, messages are handled asynchronous and response should always be 'ok'
+    logger:notice("on_interdc_reply: ~p", [catch binary_to_term(BinaryResp)]),
+    ok.
 
 
 handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Timestamp, my_dc_id = RequesterDcId}, From, State) ->
@@ -456,6 +444,10 @@ handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId, Snapshot, Retries) ->
                     {error, Reason};
                 {ok, Time} ->
 %%                    logger:notice("Handoff transaction to ~p SUCCESS", [RequesterDcId]),
+                    send_interdc_lock_request(RequesterDcId, #on_receive_remote_locks{
+                        snapshot_time = Time,
+                        locks = Locks
+                    }, 3),
                     {ok, Time}
             end
     end.

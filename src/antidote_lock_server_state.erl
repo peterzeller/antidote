@@ -302,7 +302,7 @@ add_process(Requester, RequestTime, IsRemote, Locks, State) ->
 %% Precondition: all required locks are available locally
 -spec try_acquire_locks(integer(), pid(), state()) -> {boolean(), state()}.
 try_acquire_locks(CurrentTime, Pid, State) ->
-    logger:notice("try_acquire_locks,~n exclusive = ~p~n CurrentTime = ~p", [print_exclusive_locks(State#state.exclusive_locks), print_systemtime( CurrentTime)]),
+    logger:notice("try_acquire_locks,~n exclusive = ~p~n CurrentTime = ~p~n State = ~p", [print_exclusive_locks(State#state.exclusive_locks), print_systemtime( CurrentTime), print_state(State)]),
     case maps:find(Pid, State#state.by_pid) of
         {ok, PidState} ->
             LockStates = PidState#pid_state.locks,
@@ -496,6 +496,9 @@ next_actions(State, CurrentTime) ->
     % sort processes by request time, so that the processes waiting the longest will
     % acquire their locks first
     Pids = [Pid || {Pid, _} <- lists:sort(fun compare_by_request_time/2, CurrentPidStates)],
+
+    logger:notice("next_actions ~p~n Pids = ~p~n State = ~p", [print_systemtime(CurrentTime), Pids, print_state(State)]),
+
     % try to acquire
     lists:foldl(fun(Pid, {{HandOverActions, LockRequestActions, Replies}, S}) ->
         {AllAcquired, S2} = try_acquire_locks(CurrentTime, Pid, S),
