@@ -581,13 +581,15 @@ handle_remote_requests(State, CurrentTime) ->
     Locks = [L || {{_Dc, L}, {_K, _T}} <- LocksToTransferL],
 
     % remove sent locks (shared if shared, all if exclusive)
-    {RequestAgainRemote, State2} = remove_sent_locks_from_remote_requests(LocksWithKind, State),
+    NewRemoteLocks = remove_sent_locks_from_remote_requests(LocksWithKind, State),
+
+    RequestAgainRemote = remote_lock_requests_for_sent_locks(LocksWithKind, State),
 
     % check local requests and get the locks that must be requested again
-    RequestAgainLocal = get_local_waiting_requests(LocksWithKind, State2),
+    RequestAgainLocal = get_local_waiting_requests(LocksWithKind, State),
 
     % change local requests to waiting_remote
-    State3 = change_waiting_locks_to_remote(Locks, State2),
+    State2 = change_waiting_locks_to_remote(Locks, State),
 
     ok.
 
@@ -603,31 +605,29 @@ exists_conflicting_remote_request(Dc, L, K, T, State) ->
 
 %% Removes all the transferred locks and all conflicting locks from the
 %% set of remote requests and collects them in a list to be sent to the remote DC.
--spec remove_sent_locks_from_remote_requests([{antidote_locks:lock(), antidote_locks:lock_kind()}], state()) -> {lock_request_actions_for_dc(), state()}.
+-spec remove_sent_locks_from_remote_requests([{antidote_locks:lock(), antidote_locks:lock_kind()}], state()) -> lock_request_actions_for_dc().
 remove_sent_locks_from_remote_requests(LocksWithKind, State) ->
-    NewRemoteRequests = maps:filter(fun({Dc, L}, {K, T}) ->
-        lists:any(fun({L2, K2}) ->
-            L == L2
-                andalso not (K == shared andalso K2 == shared)
+    maps:filter(fun({Dc, L}, {K, T}) ->
+        lists:foreach(fun({L2, K2}) ->
+            L /= L2 orelse (K == shared andalso K2 == shared)
         end, LocksWithKind)
-    end, State#state.remote_requests),
+    end, State#state.remote_requests).
 
-    Actions = lists:flatmap(fun({{Dc, L}, {K, T}}) ->
+-spec remote_lock_requests_for_sent_locks([{antidote_locks:lock(), antidote_locks:lock_kind()}], state()) -> lock_request_actions_for_dc().
+remote_lock_requests_for_sent_locks(LocksWithKind, State) ->
+    lists:flatmap(fun({{Dc, L}, {K, T}}) ->
         lists:flatmap(fun({L2, K2}) ->
             %% TODO need more than locks with kind
             case L == L2 of
                 false -> [];
                 true ->
-                    case L2 of
-                        shared -> [];
-                        exclusive ->
+                    case {K, K2} of
+                        {shared, shared} -> [];
+                        exclusive -> [{{Dc, L}, {K, T}}]
                     end
             end
         end, LocksWithKind)
-        end, maps:to_list(State#state.remote_requests)),
-
-
-.
+    end, maps:to_list(State#state.remote_requests)).
 
 % checks if there is a conflicting local request for the given lock
 % with time <= T or already held
