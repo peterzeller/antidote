@@ -34,7 +34,7 @@
 -endif.
 
 
--export([group_by_first/1, group_by/2, group_by/4]).
+-export([group_by_first/1, group_by/2, group_by/4, reduce/2]).
 
 
 %% groups a list of key-value pairs by key
@@ -58,6 +58,14 @@ group_by(F, Init, Merge, List) ->
         K = F(X),
         maps:update_with(K, fun(L) -> Merge(X, L) end, Init(X), M)
     end, maps:new(), List).
+
+
+-spec reduce(fun((E,E) -> E), [E]) -> E.
+reduce(_, []) -> throw('cannot reduce empty list');
+reduce(_, [X]) -> X;
+reduce(M, [X, Y | Xs]) -> reduce(M, [M(X,Y) | Xs]).
+
+
 
 -ifdef(TEST).
 group_by_first_test() ->

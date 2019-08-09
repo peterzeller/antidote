@@ -64,7 +64,9 @@
 
 % minimum time for holding an exclusive lock after acquiring it
 % (higher values should give higher throughput and higher tail latencies)
--define(MinExclusiveLockDuration, 500).
+-define(MinExclusiveLockDuration, 50).
+
+-define(MaxLockHoldDuration, 500).
 
 % how long (in milliseconds) may a transaction take to acquire the necessary locks?
 -define(LOCK_REQUEST_TIMEOUT, 20000).
@@ -196,7 +198,7 @@ init([]) ->
     spawn_link(fun() ->
         check_lock_state_process(Self)
     end),
-    {ok, antidote_lock_server_state:initial(MyDcId, ?MinExclusiveLockDuration)}.
+    {ok, antidote_lock_server_state:initial(MyDcId, ?MinExclusiveLockDuration, ?MaxLockHoldDuration, ?INTER_DC_LOCK_REQUEST_DELAY)}.
 
 check_lock_state_process(Pid) ->
     timer:sleep(100),
@@ -358,7 +360,7 @@ handle_request_locks(ClientClock, Locks, From, State) ->
 handle_request_locks2(LockEntries, ReadClock, From, State) ->
     AllDcIds = dc_meta_data_utilities:get_dcs(),
 
-    {Actions, NewState} = antidote_lock_server_state:new_request(From, erlang:system_time(millisecond), ?INTER_DC_LOCK_REQUEST_DELAY, ReadClock, AllDcIds, LockEntries, State),
+    {Actions, NewState} = antidote_lock_server_state:new_request(From, erlang:system_time(millisecond), ReadClock, AllDcIds, LockEntries, State),
     logger:notice("handle_request_locks~n AllDcIds = ~p~nLockEntries= ~p~n  Actions = ~p", [AllDcIds, LockEntries, antidote_lock_server_state:print_actions(Actions)]),
     run_actions(Actions, NewState),
     {noreply, NewState}.
@@ -487,11 +489,9 @@ run_actions(Actions, State) ->
 
     spawn_link(fun() ->
         % send to other data centers
-        lists:foreach(fun({HandOver, RequesterDcId, Requester}) ->
-            {ok, SnapshotTime2} = handoff_locks_to_other_dcs(HandOver, RequesterDcId, MyDcId, SnapshotTime, 5),
-%%            logger:notice("antidote_lock_server: handover locks to ~p~n  HandOver = ~p~n SnapshotTime = ~p", [RequesterDcId, HandOver, antidote_lock_server_state:print_vc(SnapshotTime)]),
-            gen_server:reply(Requester, {ok, HandOver, SnapshotTime2})
-        end, HandOverActions),
+        lists:foreach(fun({Dc, HandOver}) ->
+            {ok, _} = handoff_locks_to_other_dcs(HandOver, Dc, MyDcId, SnapshotTime, 5)
+        end, maps:to_list(HandOverActions)),
 
         % send requests
         send_interdc_lock_requests(LockRequestActions, MyDcId),
