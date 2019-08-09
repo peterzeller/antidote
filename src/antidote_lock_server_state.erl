@@ -755,7 +755,7 @@ merge_lock_request_actions(A, B) ->
         (_, [], Acc) ->
             Acc;
         (K, V1, Acc) ->
-            maps:update_with(K, fun(V2) -> ordsets:union(V1, V2) end, V1, Acc)
+            maps:update_with(K, fun(V2) -> merge_lock_request_actions_for_dc(V1, V2) end, V1, Acc)
     end, B, A).
 
 
