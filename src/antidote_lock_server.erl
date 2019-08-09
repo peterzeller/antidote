@@ -483,7 +483,7 @@ run_actions(Actions, State) ->
         Printed ->
             logger:notice("run_actions ~p", [Printed])
     end,
-    {HandOverActions, LockRequestActions, Replies} = Actions,
+    {actions, HandOverActions, LockRequestActions, Replies} = Actions,
     MyDcId = antidote_lock_server_state:my_dc_id(State),
     SnapshotTime = antidote_lock_server_state:get_snapshot_time(State),
     Self = self(),
