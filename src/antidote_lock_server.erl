@@ -404,11 +404,12 @@ on_interdc_reply(BinaryResp, _RequestCacheEntry) ->
     ok.
 
 
-handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Timestamp, my_dc_id = RequesterDcId}, From, State) ->
-    {Actions, NewState} = antidote_lock_server_state:new_remote_request(erlang:system_time(millisecond), From, Timestamp, Locks, RequesterDcId, State),
+handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Timestamp, my_dc_id = RequesterDcId}, _From, State) ->
+    {Actions, NewState} = antidote_lock_server_state:new_remote_request(erlang:system_time(millisecond),
+        maps:from_list([{{RequesterDcId, L}, {K, Timestamp}} || {L, K} <- Locks ]), State),
 %%    logger:notice("handle_request_locks_remote~n  State = ~p~n  Locks = ~p~n  Timestamp = ~p~n  RequesterDcId = ~p~n  Actions = ~p", [antidote_lock_server_state:print_state(State), Locks, antidote_lock_server_state:print_systemtime(Timestamp), RequesterDcId, antidote_lock_server_state:print_actions(Actions)]),
     run_actions(Actions, NewState),
-    {noreply, NewState}.
+    {reply, ok, NewState}.
 
 
 -spec handoff_locks_to_other_dcs(antidote_locks:lock_spec(), dcid(), dcid(), snapshot_time(), integer()) -> {ok, snapshot_time()} | {error, reason()}.

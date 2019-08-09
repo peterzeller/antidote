@@ -222,11 +222,12 @@ remove_locks(CurrentTime, FromPid, CommitTime, State) ->
     case maps:find(FromPid, State#state.by_pid) of
         error ->
             % Pid entry does not exist -> do nothing
-            {{[], #{}, []}, State};
-        {ok, _PidState} ->
+            {{#{}, #{}, []}, State};
+        {ok, PidState} ->
             StateWithoutPid = State#state{
                 by_pid = maps:remove(FromPid, State#state.by_pid),
-                snapshot_time = merge_snapshot_time(CommitTime, State#state.snapshot_time)
+                snapshot_time = merge_snapshot_time(CommitTime, State#state.snapshot_time),
+                last_used = update_last_used(CurrentTime, PidState, State#state.last_used)
             },
             next_actions(StateWithoutPid, CurrentTime)
     end.
@@ -281,6 +282,8 @@ print_pid_state(PidState) ->
         request_time => print_systemtime(PidState#pid_state.request_time)
     }.
 
+print_vc(undefined) ->
+    #{};
 print_vc(Vc) ->
     try maps:from_list([{print_dc(K), print_systemtime(V)} || {K,V} <- vectorclock:to_list(Vc)])
     catch
@@ -525,6 +528,9 @@ update_waiting_remote_list(AllDcs, MyDcId, LockValues, Locks) ->
 % determines the next actions to perform
 -spec next_actions(state(), integer()) -> {actions(), state()}.
 next_actions(State, CurrentTime) ->
+
+    io:format("next_actions ~p~n ~p~n", [print_systemtime(CurrentTime), print_state(State)]),
+
     % First try to serve remote requests:
     {Actions, State2} = handle_remote_requests(State, CurrentTime),
 
@@ -572,7 +578,6 @@ handle_remote_requests(State, CurrentTime) ->
             andalso not exists_conflicting_remote_request(Dc, L, K, T, State)
     end, State#state.remote_requests),
 
-    io:format("LocksToTransfer:~n ~p~n", [LocksToTransfer]),
 
     LocksToTransferL = maps:to_list(LocksToTransfer),
     LocksWithKind = [{L,K} || {{_Dc, L}, {K, _T}} <- LocksToTransferL],
@@ -643,19 +648,17 @@ remote_lock_requests_for_sent_locks(LocksToTransferL, State) ->
 % with time <= T or already held
 -spec exists_local_request(antidote_locks:lock(), milliseconds(), antidote_locks:lock_kind(), state()) -> boolean().
 exists_local_request(Lock, T, Kind, State) ->
-    R = lists:any(
+    lists:any(
         fun(S) ->
             TimeBefore = S#pid_state.request_time =< T,
             case orddict:find(Lock, S#pid_state.locks) of
-                {ok, {St, shared}} -> io:format("shared ~p~n", [St]), Kind == exclusive andalso (St == held orelse TimeBefore);
-                {ok, {St, exclusive}} -> io:format("exclusive ~p~n", [St]), St == held orelse TimeBefore;
-                error -> io:format("error~n"), false
+                {ok, {St, shared}} -> Kind == exclusive andalso (St == held orelse TimeBefore);
+                {ok, {St, exclusive}} -> St == held orelse TimeBefore;
+                error -> false
             end
         end,
         maps:values(State#state.by_pid)
-    ),
-    io:format("exists_local_request(~p, ~p, ~p) -> ~p~n", [Lock, T, Kind, R]),
-    R.
+    ).
 
 
 
@@ -669,6 +672,12 @@ set_lock_acquired_time(CurrentTime, PidStatePidStateLocks, State) ->
             (_, _, M) -> M
         end, State#state.time_acquired, PidStatePidStateLocks),
     State#state{time_acquired = EL}.
+
+-spec update_last_used(milliseconds(), #pid_state{}, #{antidote_locks:lock() => milliseconds()}) -> #{antidote_locks:lock() => milliseconds()}.
+update_last_used(CurrentTime, PidState, LastUsed) ->
+    orddict:fold(fun(L, _, Acc) ->
+        maps:put(L, CurrentTime, Acc)
+    end, LastUsed, PidState#pid_state.locks).
 
 %%-spec remove_lock_acquired_time(orddict:orddict(antidote_locks:lock(), lock_state_with_kind()), state()) -> state().
 %%remove_lock_acquired_time(PidStatePidStateLocks, State) ->
@@ -1036,7 +1045,7 @@ two_exclusive_locks_test() ->
     % cannot release locks a second time
     ?assertMatch({error, _}, check_release_locks(p1, S3)),
 
-    ?assertEqual({{[], #{}, []}, S3}, remove_locks(99, p1, vectorclock:new(), S3)),
+    ?assertEqual({{#{}, #{}, []}, S3}, remove_locks(99, p1, vectorclock:new(), S3)),
     ok.
 
 shared_lock_with_remote_shared_test() ->
@@ -1237,5 +1246,93 @@ locks_missing_local_retry_test() ->
     ?assertEqual(true, StillWaiting4),
     ok.
 
+
+
+
+min_max_time_test() ->
+    SInit = initial(dc1, 30, 200, 1),
+    R1 = {p1, t1},
+    % Assume we have exclusive access -> we can immediately get the lock
+    RLocks1 = [
+        {{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}
+    ],
+    {Actions1, S1} = new_request(R1, 10, undefined, [dc1, dc2, dc3], RLocks1, SInit),
+    ?assertEqual({#{}, #{}, [R1]}, Actions1),
+
+    % we finish the transaction and release the lock
+    {Actions2, S2} = remove_locks(11, p1, #{}, S1),
+    ?assertEqual({#{}, #{}, []}, Actions2),
+
+    % Now dc2 also wants the lock, but does not get it because of the minimum wait time
+    {Actions3, S3} = new_remote_request(12, #{{dc2, lock1} => {exclusive, 10}}, S2),
+    ?assertEqual({#{}, #{}, []}, Actions3),
+
+    % we can continue to use the lock on dc1 for 200ms if we have less than 30ms between requests
+    S4 = lists:foldl(fun(Time, AccS) ->
+        R = {{p,Time}, {t, Time}},
+        {AccActions1, AccS2} = new_request(R, Time, undefined, [dc1, dc2, dc3], RLocks1, AccS),
+        ?assertEqual({#{}, #{}, [R]}, AccActions1),
+
+        % we finish the transaction and release the lock
+        {AccActions2, AccS3} = remove_locks(Time+1, {p, Time}, #{}, AccS2),
+        ?assertEqual({#{}, #{}, []}, AccActions2),
+        AccS3
+
+    end, S3, [30, 50, 75, 100, 125, 150, 175, 205]),
+
+    % however, after 200ms, we have to pass the lock:
+    R2 = {p2, t2},
+    {Actions5, _S5} = new_request(R2, 215, undefined, [dc1, dc2, dc3], RLocks1, S4),
+    ?assertEqual({
+        #{dc2 => [{lock1,exclusive}]},
+        #{dc2 => #{{dc1,lock1} => {exclusive,215}}},
+        []
+    }, Actions5),
+
+    ok.
+
+
+
+min_max_time_interrupt_test() ->
+    SInit = initial(dc1, 30, 200, 1),
+    R1 = {p1, t1},
+    % Assume we have exclusive access -> we can immediately get the lock
+    RLocks1 = [
+        {{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}
+    ],
+    {Actions1, S1} = new_request(R1, 10, undefined, [dc1, dc2, dc3], RLocks1, SInit),
+    ?assertEqual({#{}, #{}, [R1]}, Actions1),
+
+    % we finish the transaction and release the lock
+    {Actions2, S2} = remove_locks(11, p1, #{}, S1),
+    ?assertEqual({#{}, #{}, []}, Actions2),
+
+    % Now dc2 also wants the lock, but does not get it because of the minimum wait time
+    {Actions3, S3} = new_remote_request(12, #{{dc2, lock1} => {exclusive, 10}}, S2),
+    ?assertEqual({#{}, #{}, []}, Actions3),
+
+    % we can continue to use the lock on dc1 for 200ms if we have less than 30ms between requests
+    S4 = lists:foldl(fun(Time, AccS) ->
+        R = {{p,Time}, {t, Time}},
+        {AccActions1, AccS2} = new_request(R, Time, undefined, [dc1, dc2, dc3], RLocks1, AccS),
+        ?assertEqual({#{}, #{}, [R]}, AccActions1),
+
+        % we finish the transaction and release the lock
+        {AccActions2, AccS3} = remove_locks(Time+1, {p, Time}, #{}, AccS2),
+        ?assertEqual({#{}, #{}, []}, AccActions2),
+        AccS3
+
+    end, S3, [30, 50, 75, 100]),
+
+    % however, if we take more than 30ms we have to pass the lock:
+    R2 = {p2, t2},
+    {Actions5, _S5} = new_request(R2, 135, undefined, [dc1, dc2, dc3], RLocks1, S4),
+    ?assertEqual({
+        #{dc2 => [{lock1,exclusive}]},
+        #{dc2 => #{{dc1,lock1} => {exclusive,135}}},
+        []
+    }, Actions5),
+
+    ok.
 
 -endif.
