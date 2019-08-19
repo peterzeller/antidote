@@ -41,7 +41,7 @@
 -export([
     initial/4,
     my_dc_id/1,
-    new_request/6, new_remote_request/3, on_remote_locks_received/5, remove_locks/4, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/4, print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_request_actions/1, is_lock_process/2, get_remote_waiting_locks/1]).
+    new_request/6, new_remote_request/3, on_remote_locks_received/5, remove_locks/4, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/5, print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_request_actions/1, is_lock_process/2, get_remote_waiting_locks/1]).
 
 
 % state invariants:
@@ -251,15 +251,14 @@ get_timer_active(#state{timer_Active = B}) -> B.
 %% Time: The current time (in ms)
 %% RetryDelta: only considers requests that are waiting for more than this amount of ms
 %% OtherDcs: List of all other data centers
--spec retries_for_waiting_remote(milliseconds(), milliseconds(), [dcid()], state()) -> {boolean(), lock_request_actions()}.
-retries_for_waiting_remote(Time, RetryDelta, OtherDcs, State) ->
+-spec retries_for_waiting_remote(milliseconds(), milliseconds(), dcid(), [dcid()], state()) -> {boolean(), lock_request_actions()}.
+retries_for_waiting_remote(Time, RetryDelta, MyDc, OtherDcs, State) ->
     WaitingRemote = [{L, {K, PidState#pid_state.request_time}} ||
         PidState <- maps:values(State#state.by_pid),
         {L, {waiting_remote, K}} <- PidState#pid_state.locks],
-    WaitingRemoteLong = [{L, {K, T}} || {L, {K, T}} <- WaitingRemote, T + RetryDelta =< Time],
+    WaitingRemoteLong = [{{MyDc, L}, {K, T}} || {L, {K, T}} <- WaitingRemote, T + RetryDelta =< Time],
     ByLock = maps:map(fun(_, Ls) -> {max_lock_kind([K || {K, _} <- Ls]), lists:min([T || {_, T} <- Ls])} end, antidote_list_utils:group_by_first(WaitingRemoteLong)),
-    LockSpec = orddict:from_list(maps:to_list(ByLock)),
-    LockRequests = maps:from_list([{Dc, LockSpec} || LockSpec /= [], Dc <- OtherDcs]),
+    LockRequests = maps:from_list([{Dc, ByLock} || ByLock /= #{}, Dc <- OtherDcs]),
     {WaitingRemote /= [], LockRequests}.
 
 
@@ -1234,14 +1233,14 @@ locks_missing_local_retry_test() ->
         dc3 => #{{dc1, lock1} => {exclusive,21}}}}, Actions2),
 
     % request again later:
-    {StillWaiting3, Actions3} = retries_for_waiting_remote(25, 12, [dc2, dc3], S2),
-    Missing3 = [{lock1, {shared, 11}}, {lock2, {exclusive, 11}}, {lock3, {shared, 11}}],
+    {StillWaiting3, Actions3} = retries_for_waiting_remote(25, 12, dc1, [dc2, dc3], S2),
+    Missing3 = #{{dc1, lock1} => {shared, 11}, {dc1, lock2} => {exclusive, 11}, {dc1, lock3} => {shared, 11}},
     ?assertEqual(#{dc2 => Missing3, dc3 => Missing3}, Actions3),
     ?assertEqual(true, StillWaiting3),
 
     % request again later:
-    {StillWaiting4, Actions4} = retries_for_waiting_remote(35, 10, [dc2, dc3], S2),
-    Missing4 = [{lock1, {exclusive, 11}}, {lock2, {exclusive, 11}}, {lock3, {shared, 11}}, {lock4, {shared, 21}}],
+    {StillWaiting4, Actions4} = retries_for_waiting_remote(35, 10, dc1, [dc2, dc3], S2),
+    Missing4 = #{{dc1, lock1} => {exclusive, 11}, {dc1, lock2} => {exclusive, 11}, {dc1, lock3} => {shared, 11}, {dc1, lock4} => {shared, 21}},
     ?assertEqual(#{dc2 => Missing4, dc3 => Missing4}, Actions4),
     ?assertEqual(true, StillWaiting4),
     ok.
