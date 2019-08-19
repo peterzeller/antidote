@@ -242,15 +242,16 @@ helper_multi_value_register_test([{Value1,Current_Node,Value2} | Remaining_Nodes
 %% Let 3 processes asynchronously increment the same counter each 100times while using a lock to restrict the access.
 %% 30 ms delay between increments
 asynchronous_test_1(Config) ->
+    N = 100,
     Nodes = proplists:get_value(nodes, Config),
     Node1 = hd(hd(Nodes)),
     Node2 = hd(hd(tl(Nodes))),
     Node3 = hd(hd(tl(tl(Nodes)))),
     Keys = [asynchronous_test_key_1],
     Object = {asynchronous_test_key_1, antidote_crdt_counter_pn, antidote_bucket},
-    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys,Object,100,[],self(),30,1]),
-    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys,Object,100,[],self(),30,2]),
-    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys,Object,100,[],self(),30,3]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node1,Keys,Object,N,[],self(),30,1]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node2,Keys,Object,N,[],self(),30,2]),
+    spawn_link(lock_mgr_SUITE,asynchronous_test_helper,[Node3,Keys,Object,N,[],self(),30,3]),
 
     receive
         {done,Node1,1,_Clocks1} -> ok
@@ -280,9 +281,9 @@ asynchronous_test_1(Config) ->
     {ok, [Res1]} = Res_11,
     {ok, [Res2]} = Res_22,
     {ok, [Res3]} = Res_33,
-    ?assertEqual(300,Res1),
-    ?assertEqual(300,Res2),
-    ?assertEqual(300,Res3).
+    ?assertEqual(3*N,Res1),
+    ?assertEqual(3*N,Res2),
+    ?assertEqual(3*N,Res3).
 
 
 

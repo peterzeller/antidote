@@ -64,9 +64,9 @@
 
 % minimum time for holding an exclusive lock after acquiring it
 % (higher values should give higher throughput and higher tail latencies)
--define(MinExclusiveLockDuration, 50).
+-define(MinExclusiveLockDuration, 250).
 
--define(MaxLockHoldDuration, 500).
+-define(MaxLockHoldDuration, 1000).
 
 % how long (in milliseconds) may a transaction take to acquire the necessary locks?
 -define(LOCK_REQUEST_TIMEOUT, 20000).
@@ -198,6 +198,7 @@ init([]) ->
     spawn_link(fun() ->
         check_lock_state_process(Self)
     end),
+    timer:send_interval(100, tick),
     {ok, antidote_lock_server_state:initial(MyDcId, ?MinExclusiveLockDuration, ?MaxLockHoldDuration, ?INTER_DC_LOCK_REQUEST_DELAY)}.
 
 check_lock_state_process(Pid) ->
@@ -273,13 +274,19 @@ handle_cast2(#on_receive_remote_locks2{lock_entries = LockEntries, read_clock = 
 handle_cast2(#request_locks2{lock_entries = LockEntries, read_clock = ReadClock, from = From}, State) ->
     handle_request_locks2(LockEntries, ReadClock, From, State).
 
+handle_info2(tick, State) ->
+    Time = erlang:system_time(millisecond),
+    logger:notice("tick at ~p", [antidote_lock_server_state:print_systemtime(Time)]),
+    {Actions, State2} = antidote_lock_server_state:next_actions(State, Time),
+    run_actions(Actions, State2),
+    {noreply, State2};
 handle_info2(inter_dc_retry_timeout, State) ->
     Time = erlang:system_time(millisecond),
     AllDcIds = dc_meta_data_utilities:get_dcs(),
     MyDcId = antidote_lock_server_state:my_dc_id(State),
     OtherDcs = AllDcIds -- [MyDcId],
     {Waiting, InterDcRequests} = antidote_lock_server_state:retries_for_waiting_remote(Time, ?INTER_DC_RETRY_DELAY div 2, MyDcId, OtherDcs, State),
-%%    logger:notice("Retrying requests: ~p, ~p~n  State = ~p", [InterDcRequests, Waiting, antidote_lock_server_state:print_state(State)]),
+    logger:notice("Retrying requests: ~p, ~p~n  State = ~p", [InterDcRequests, Waiting, antidote_lock_server_state:print_state(State)]),
     send_interdc_lock_requests(InterDcRequests),
     case Waiting of
         true ->
@@ -330,6 +337,7 @@ code_change(_OldVsn, State, _Extra) ->
     when Result :: {reply, Resp, antidote_lock_server_state:state()} | {noreply, antidote_lock_server_state:state()},
     Resp :: {could_not_obtain_logs, any()}.
 handle_request_locks(ClientClock, Locks, From, State) ->
+    logger:notice("handle_request_locks~n ClientClock = ~p~n Locks= ~p", [ClientClock, Locks]),
     % link the requester:
     % if we crash, then the transaction using the locks should crash as well
     % if the transaction crashes, we want to know about that to release the lock
@@ -361,7 +369,7 @@ handle_request_locks2(LockEntries, ReadClock, From, State) ->
     AllDcIds = dc_meta_data_utilities:get_dcs(),
 
     {Actions, NewState} = antidote_lock_server_state:new_request(From, erlang:system_time(millisecond), ReadClock, AllDcIds, LockEntries, State),
-    logger:notice("handle_request_locks~n AllDcIds = ~p~nLockEntries= ~p~n  Actions = ~p", [AllDcIds, LockEntries, antidote_lock_server_state:print_actions(Actions)]),
+    logger:notice("handle_request_locks2~n AllDcIds = ~p~nLockEntries= ~p~n  Actions = ~p", [AllDcIds, LockEntries, antidote_lock_server_state:print_actions(Actions)]),
     run_actions(Actions, NewState),
     {noreply, NewState}.
 
@@ -370,10 +378,11 @@ handle_request_locks2(LockEntries, ReadClock, From, State) ->
 -spec send_interdc_lock_requests(antidote_lock_server_state:lock_request_actions()) -> ok.
 send_interdc_lock_requests(M) when M == #{} -> ok;
 send_interdc_lock_requests(RequestsByDc) ->
-%%    logger:notice("send_interdc_lock_requests~n RequestsByDc = ~p", [antidote_lock_server_state:print_lock_request_actions(RequestsByDc)]),
+    logger:notice("send_interdc_lock_requests~n RequestsByDc = ~p", [antidote_lock_server_state:print_lock_request_actions(RequestsByDc)]),
     maps:fold(fun(OtherDcID, RequestedLocks, ok) ->
-        logger:notice("RequestedLocks =  ~p", [RequestedLocks]),
-        ByTime = antidote_list_utils:group_by_first([{{Dc, RequestTime}, {Lock, Kind}} || {{Dc, Lock}, {Kind, RequestTime}} <- maps:to_list(RequestedLocks)]),
+        ByTime = antidote_list_utils:group_by_first(
+            lists:map(fun({{Dc, Lock}, {Kind, RequestTime}}) -> {{Dc, RequestTime}, {Lock, Kind}} end,
+                maps:to_list(RequestedLocks))),
         % send one request for each request-time
         maps:fold(fun({Dc, Time}, RLocks, _) ->
             ReqMsg = #request_locks_remote{timestamp = Time, locks = ordsets:from_list(RLocks), my_dc_id = Dc},
@@ -386,7 +395,7 @@ send_interdc_lock_requests(RequestsByDc) ->
 send_interdc_lock_request(OtherDcID, ReqMsg, Retries) ->
     {LocalPartition, _} = log_utilities:get_key_partition(locks),
     PDCID = {OtherDcID, LocalPartition},
-%%    logger:notice("send_interdc_lock_request to ~p:~n~p", [OtherDcID, ReqMsg]),
+    logger:notice("send_interdc_lock_request to ~p:~n~p", [OtherDcID, ReqMsg]),
     case inter_dc_query:perform_request(?LOCK_SERVER_REQUEST, PDCID, term_to_binary(ReqMsg), fun antidote_lock_server:on_interdc_reply/2) of
         ok ->
 %%            logger:notice("send_interdc_lock_request ok, to ~p,~n~p", [OtherDcID, ReqMsg]),
@@ -399,16 +408,18 @@ send_interdc_lock_request(OtherDcID, ReqMsg, Retries) ->
             ok
     end.
 
-on_interdc_reply(BinaryResp, _RequestCacheEntry) ->
+on_interdc_reply(_BinaryResp, _RequestCacheEntry) ->
     % Nothing to do here, messages are handled asynchronous and response should always be 'ok'
-    logger:notice("on_interdc_reply: ~p", [catch binary_to_term(BinaryResp)]),
     ok.
 
 
 handle_request_locks_remote(#request_locks_remote{locks = Locks, timestamp = Timestamp, my_dc_id = RequesterDcId}, _From, State) ->
-    {Actions, NewState} = antidote_lock_server_state:new_remote_request(erlang:system_time(millisecond),
-        maps:from_list([{{RequesterDcId, L}, {K, Timestamp}} || {L, K} <- Locks ]), State),
-%%    logger:notice("handle_request_locks_remote~n  State = ~p~n  Locks = ~p~n  Timestamp = ~p~n  RequesterDcId = ~p~n  Actions = ~p", [antidote_lock_server_state:print_state(State), Locks, antidote_lock_server_state:print_systemtime(Timestamp), RequesterDcId, antidote_lock_server_state:print_actions(Actions)]),
+    {Actions, NewState} = antidote_lock_server_state:new_remote_request(
+        erlang:system_time(millisecond),
+        maps:from_list(
+            lists:map(fun({L, K}) -> {{RequesterDcId, L}, {K, Timestamp}} end, Locks)),
+        State),
+    logger:notice("handle_request_locks_remote~n  State = ~p~n  Locks = ~p~n  Timestamp = ~p~n  RequesterDcId = ~p~n  Actions = ~p", [antidote_lock_server_state:print_state(State), Locks, antidote_lock_server_state:print_systemtime(Timestamp), RequesterDcId, antidote_lock_server_state:print_actions(Actions)]),
     run_actions(Actions, NewState),
     {reply, ok, NewState}.
 
@@ -447,7 +458,7 @@ handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId, Snapshot, Retries) ->
                     logger:error("Handoff transaction to ~p failed with reason ~p", [RequesterDcId, Reason]),
                     {error, Reason};
                 {ok, Time} ->
-%%                    logger:notice("Handoff transaction to ~p SUCCESS", [RequesterDcId]),
+                    logger:notice("Handoff transaction to ~p SUCCESS", [RequesterDcId]),
                     send_interdc_lock_request(RequesterDcId, #on_receive_remote_locks{
                         snapshot_time = Time,
                         locks = Locks
@@ -480,7 +491,8 @@ handle_release_locks(FromPid, CommitTime, State) ->
 -spec run_actions(antidote_lock_server_state:actions(), antidote_lock_server_state:state()) -> ok.
 run_actions(Actions, State) ->
     case antidote_lock_server_state:print_actions(Actions) of
-        [] -> ok;
+        [] ->
+            logger:notice("run_actions none");
         Printed ->
             logger:notice("run_actions ~p", [Printed])
     end,
@@ -515,6 +527,7 @@ run_actions(Actions, State) ->
 
 
 handle_on_receive_remote_locks(Locks, SnapshotTime, State) ->
+    logger:info("handle_on_receive_remote_locks~n Locks = ~p~n", [Locks]),
     Self = self(),
     spawn_link(fun() ->
         LockObjects = antidote_lock_crdt:get_lock_objects(Locks),
@@ -533,7 +546,7 @@ handle_on_receive_remote_locks(Locks, SnapshotTime, State) ->
     {reply, ok, State}.
 
 handle_on_receive_remote_locks2(LockEntries, ReadClock, State) ->
-%%    logger:notice("handle_on_receive_remote_locks2, new lock entries:~n~p", [LockEntries]),
+    logger:notice("handle_on_receive_remote_locks2, new lock entries:~n~p", [LockEntries]),
     AllDcIds = dc_meta_data_utilities:get_dcs(),
     {Actions, NewState} = antidote_lock_server_state:on_remote_locks_received(erlang:system_time(millisecond), ReadClock, AllDcIds, LockEntries, State),
 %%    logger:notice("handle_on_receive_remote_locks~n  LockEntries = ~p~n  State = ~p~n  NewState = ~p~n  Actions = ~p", [LockEntries, antidote_lock_server_state:print_state(State), antidote_lock_server_state:print_state(NewState), antidote_lock_server_state:print_actions(Actions)]),

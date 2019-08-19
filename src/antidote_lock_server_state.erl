@@ -41,7 +41,7 @@
 -export([
     initial/4,
     my_dc_id/1,
-    new_request/6, new_remote_request/3, on_remote_locks_received/5, remove_locks/4, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/5, print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_request_actions/1, is_lock_process/2, get_remote_waiting_locks/1]).
+    new_request/6, new_remote_request/3, on_remote_locks_received/5, remove_locks/4, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/5, print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_request_actions/1, is_lock_process/2, get_remote_waiting_locks/1, next_actions/2]).
 
 
 % state invariants:
@@ -311,9 +311,9 @@ print_actions(#actions{hand_over = HandOverActions, lock_request = LockRequestAc
 
 -spec print_lock_request_actions(lock_request_actions()) -> any().
 print_lock_request_actions(LockRequestActions) ->
-    try [#{' lock_request_to' => print_dc(Dc), lock => L, kind => K, time => print_systemtime(T)} ||
+    try [#{' lock_request_to' => print_dc(Dc), for_dc => print_dc(RDc), lock => L, kind => K, time => print_systemtime(T)} ||
         {Dc, As} <- maps:to_list(LockRequestActions),
-        {L, {K, T}} <- maps:to_list(As)]
+        {{RDc, L}, {K, T}} <- maps:to_list(As)]
     catch
         A:B:T ->
             [{'ERROR in print_lock_request_actions', LockRequestActions, {A, B, T}}]
@@ -549,7 +549,7 @@ next_actions(State, CurrentTime) ->
     Pids = [Pid || {Pid, _} <- lists:sort(fun compare_by_request_time/2, maps:to_list(State#state.by_pid))],
 
     % try to acquire locks for local requests
-    lists:foldl(fun(Pid, {AccActions, S}) ->
+    {Actions2, State3} = lists:foldl(fun(Pid, {AccActions, S}) ->
         {AllAcquired, S2} = try_acquire_locks(CurrentTime, Pid, S),
         case AllAcquired of
             true ->
@@ -560,7 +560,16 @@ next_actions(State, CurrentTime) ->
             false ->
                 {AccActions, S2}
         end
-    end, {Actions, State2}, Pids).
+    end, {Actions, State2}, Pids),
+
+    case print_actions(Actions2) of
+        [] when State3 == State ->
+            ok;
+        PrintedActions ->
+            logger:notice("next_actions ~n PreState  = ~p~n PostState = ~p~n Actions = ~p", [print_state(State), print_state(State3), PrintedActions])
+    end,
+
+    {Actions2, State3}.
 
 -spec handle_remote_requests(state(), milliseconds()) -> {actions(), state()}.
 handle_remote_requests(State, CurrentTime) ->
