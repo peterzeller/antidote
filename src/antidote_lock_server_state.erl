@@ -41,7 +41,7 @@
 -export([
     initial/4,
     my_dc_id/1,
-    new_request/6, new_remote_request/3, on_remote_locks_received/5, remove_locks/4, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/5, print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_request_actions/1, is_lock_process/2, get_remote_waiting_locks/1, next_actions/2]).
+    new_request/6, new_remote_request/3, on_remote_locks_received/5, remove_locks/4, check_release_locks/2, get_snapshot_time/1, set_timer_active/2, get_timer_active/1, retries_for_waiting_remote/5, print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_request_actions/1, is_lock_process/2, get_remote_waiting_locks/1, next_actions/2, ack_remote_requests/3]).
 
 
 % state invariants:
@@ -74,6 +74,9 @@
     by_pid = #{} :: #{pid() => #pid_state{}},
     % for each lock: remote data centers who want this lock
     remote_requests = #{} :: lock_request_actions_for_dc(),
+    % remote requests that already have been fulfilled
+    % (might be removed from here if additional permissions come in)
+    answered_remote_requests = [] :: ordsets:ordset({dcid(), antidote_locks:lock()}),
     % is the retry timer is active or not?
     timer_Active = false :: boolean(),
     % for each exclusive lock we have: the time when we acquired it
@@ -204,9 +207,13 @@ new_remote_request(CurrentTime, LockRequestActions, State) ->
 -spec on_remote_locks_received(integer(), snapshot_time(), [dcid()], ordsets:ordset({antidote_locks:lock_spec_item(), antidote_lock_crdt:value()}), state()) -> {actions(), state()}.
 on_remote_locks_received(CurrentTime, ReadClock, AllDcs, LockEntries, State) ->
     LockStates = maps:from_list([{L, S} || {{L, _K}, S} <- LockEntries]),
+    Locks = [L || {{L, _K}, _S} <- LockEntries],
     State2 = update_waiting_remote(AllDcs, LockStates, State),
     State3 = set_snapshot_time(ReadClock, State2),
-    next_actions(State3, CurrentTime).
+    State4 = State3#state{
+        answered_remote_requests = ordsets:filter(fun({_Dc, L}) -> not lists:member(L, Locks) end, State3#state.answered_remote_requests)
+    },
+    next_actions(State4, CurrentTime).
 
 % checks that we still have access to all the locks the transaction needed.
 % This can only be violated if the lock server crashed, so it is sufficient
@@ -262,6 +269,30 @@ retries_for_waiting_remote(Time, RetryDelta, MyDc, OtherDcs, State) ->
     {WaitingRemote /= [], LockRequests}.
 
 
+%% Called when all locks for a remote request have been transferred to the target datacenter.
+%% The corresponding remote request is then removed from the state
+%% Time: The current time (in ms)
+-spec ack_remote_requests(milliseconds(), [{dcid(), antidote_locks:lock_spec_item()}], state()) -> {actions(), state()}.
+ack_remote_requests(CurrentTime, Acked, State) ->
+    NewRemoteRequests = lists:foldl(
+        fun({Dc, {L, K}}, Acc) ->
+            case maps:find({Dc, L}, Acc) of
+                {ok, {K2, _}} when K2 == shared orelse K == exclusive ->
+                    maps:remove({Dc, L}, Acc);
+                _Else ->
+                    Acc
+            end
+        end,
+        State#state.remote_requests,
+        Acked
+    ),
+    logger:notice("ack_remote_requests~n Acked = ~p~n State = ~p~n NewRR = ~p", [Acked, print_state(State), NewRemoteRequests]),
+
+    NewState = State#state{remote_requests = NewRemoteRequests},
+    next_actions(NewState, CurrentTime).
+
+
+
 %% For debugging: Transforms data into a form that is
 %% more readable when printed by Erlang.
 -spec print_state(state()) -> any().
@@ -288,7 +319,7 @@ print_pid_state(PidState) ->
 print_vc(undefined) ->
     #{};
 print_vc(Vc) ->
-    maps:from_list([{print_dc(K), print_systemtime(V)} || {K,V} <- vectorclock:to_list(Vc)]).
+    maps:from_list([{print_dc(K), print_systemtime_micro_seconds(V)} || {K,V} <- vectorclock:to_list(Vc)]).
 
 print_dc({Dc, _}) when is_atom(Dc) ->
     list_to_atom(lists:sublist(atom_to_list(Dc), 4));
@@ -300,6 +331,10 @@ print_systemtime(Ms) when is_integer(Ms) ->
     {{_Year, _Month, _Day}, {Hour, Minute, Second}} = calendar:system_time_to_local_time(Ms, millisecond),
     lists:flatten(io_lib:format("~p:~p:~p.~p", [Hour,Minute, Second, Ms rem 1000]));
 print_systemtime(Other) -> Other.
+
+print_systemtime_micro_seconds(Ms) when is_integer(Ms) ->
+    {{_Year, _Month, _Day}, {Hour, Minute, Second}} = calendar:system_time_to_local_time(Ms, micro_seconds),
+    lists:flatten(io_lib:format("~p:~p:~p.~p", [Hour,Minute, Second, Ms rem 1000000])).
 
 
 -spec print_actions(actions()) -> any().
@@ -324,6 +359,7 @@ print_lock_request_actions(LockRequestActions) ->
 is_lock_process(Pid, State) ->
     maps:is_key(Pid, State#state.by_pid).
 
+%%------------------------------------------------------------------------------------------------------------------------
 %% Internal functions
 
 
@@ -580,6 +616,8 @@ handle_remote_requests(State, CurrentTime) ->
     LocksToTransfer = maps:filter(fun({Dc, L}, {K, T}) ->
         % request must not be from the future
         T =< CurrentTime
+        % request not already answered
+            andalso not ordsets:is_element({Dc, L}, State#state.answered_remote_requests)
             andalso
             (
                 % last use is some time ago
@@ -596,11 +634,8 @@ handle_remote_requests(State, CurrentTime) ->
 
 
     LocksToTransferL = maps:to_list(LocksToTransfer),
-    LocksWithKind = [{L,K} || {{_Dc, L}, {K, _T}} <- LocksToTransferL],
     Locks = [L || {{_Dc, L}, {_K, _T}} <- LocksToTransferL],
 
-    % remove sent locks (shared if shared, all if exclusive)
-    NewRemoteLocks = remove_sent_locks_from_remote_requests(LocksWithKind, State),
 
     RequestAgainRemote = remote_lock_requests_for_sent_locks(LocksToTransferL, State),
 
@@ -610,10 +645,6 @@ handle_remote_requests(State, CurrentTime) ->
     % change local requests to waiting_remote
     State2 = change_waiting_locks_to_remote(Locks, State),
 
-    State3 = State2#state{
-        remote_requests = NewRemoteLocks
-    },
-
     HandoverActions = maps:map(
         fun(_, L) -> ordsets:from_list(L) end,
         antidote_list_utils:group_by_first([{Dc, {L,K}} || {{Dc, L}, {K, _T}} <- LocksToTransferL])),
@@ -621,6 +652,13 @@ handle_remote_requests(State, CurrentTime) ->
     Actions = #actions{
         hand_over =  HandoverActions,
         lock_request = merge_lock_request_actions(RequestAgainLocal, RequestAgainRemote)
+    },
+
+    State3 = State2#state{
+        answered_remote_requests = ordsets:union(
+            State2#state.answered_remote_requests,
+            ordsets:from_list(maps:keys(LocksToTransfer))
+        )
     },
 
     {Actions, State3}.
@@ -634,16 +672,6 @@ exists_conflicting_remote_request(Dc, L, K, T, State) ->
     end, maps:to_list(State#state.remote_requests)).
 
 
-
-%% Removes all the transferred locks and all conflicting locks from the
-%% set of remote requests and collects them in a list to be sent to the remote DC.
--spec remove_sent_locks_from_remote_requests([{antidote_locks:lock(), antidote_locks:lock_kind()}], state()) -> lock_request_actions_for_dc().
-remove_sent_locks_from_remote_requests(LocksWithKind, State) ->
-    maps:filter(fun({_Dc, L}, {K, _T}) ->
-        lists:all(fun({L2, K2}) ->
-            L /= L2 orelse (K == shared andalso K2 == shared)
-        end, LocksWithKind)
-    end, State#state.remote_requests).
 
 -spec remote_lock_requests_for_sent_locks([{{dcid(), antidote_locks:lock()}, {antidote_locks:lock_kind(), milliseconds()}}], state()) -> lock_request_actions().
 remote_lock_requests_for_sent_locks(LocksToTransferL, State) ->
@@ -1220,9 +1248,13 @@ locks_request_again_test() ->
     {Actions4, S4} = remove_locks(99, p1, vectorclock:new(), S3),
     ?assertEqual(#actions{hand_over = #{dc2 => [{lock1,exclusive}]}, lock_request = #{dc2 => #{{dc1,lock1} => {exclusive,30}}}}, Actions4),
 
+    % acknowledge that we sent it:
+    {Actions5, S5} = ack_remote_requests(99, [{dc2, {lock1, exclusive}}], S4),
+    ?assertEqual(#actions{}, Actions5),
+
     % later we get it back from dc2 and R2 can get the lock
-    {Actions5, _S5} = on_remote_locks_received(99, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], S4),
-    ?assertEqual(#actions{replies = [R2]}, Actions5),
+    {Actions6, _S6} = on_remote_locks_received(99, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], S5),
+    ?assertEqual(#actions{replies = [R2]}, Actions6),
     ok.
 
 missing_locks_empty_test() ->
