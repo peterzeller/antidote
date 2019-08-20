@@ -562,12 +562,12 @@ next_actions(State, CurrentTime) ->
         end
     end, {Actions, State2}, Pids),
 
-    case print_actions(Actions2) of
-        [] when State3 == State ->
-            ok;
-        PrintedActions ->
-            logger:notice("next_actions ~n PreState  = ~p~n PostState = ~p~n Actions = ~p", [print_state(State), print_state(State3), PrintedActions])
-    end,
+%%    case print_actions(Actions2) of
+%%        [] when State3 == State ->
+%%            ok;
+%%        PrintedActions ->
+%%            logger:notice("next_actions ~n PreState  = ~p~n PostState = ~p~n Actions = ~p", [print_state(State), print_state(State3), PrintedActions])
+%%    end,
 
     {Actions2, State3}.
 
@@ -630,7 +630,7 @@ exists_conflicting_remote_request(Dc, L, K, T, State) ->
         L == L2
             andalso Dc /= Dc2
             andalso not (K == shared andalso K2 == shared)
-            andalso T2 =< T
+            andalso {T2, Dc2} =< {T, Dc}
     end, maps:to_list(State#state.remote_requests)).
 
 
@@ -1097,6 +1097,29 @@ shared_lock_with_remote_exclusive_duplicate_test() ->
     ?assertEqual(#actions{hand_over = #{dc2 => [{lock1,exclusive}]}}, Actions4),
     ok.
 
+
+same_time_remote_test() ->
+    SInit = initial(dc1),
+    % first R1 tries to acquire lock1
+    R1 = {p1, t1},
+    {Actions1, S1} = new_request(R1, 10, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc3}}], SInit),
+    ?assertEqual(#actions{replies = [R1]}, Actions1),
+
+    % then remote DC2 tries to acquire the same lock
+    {Actions2, S2} = new_remote_request(99, #{{dc2, lock1} => {exclusive, 20}}, S1),
+    ?assertEqual(#actions{}, Actions2),
+
+    % and DC3 tries with the same timestamp
+    {Actions3, S3} = new_remote_request(99, #{{dc3, lock1} => {exclusive, 20}}, S2),
+    ?assertEqual(#actions{}, Actions3),
+
+    % when R1 releases it's lock, the remote dc2 gets it
+    {Actions4, _S4} = remove_locks(99, p1, vectorclock:new(), S3),
+    ?assertEqual(#actions{
+        hand_over = #{dc2 => [{lock1,exclusive}]},
+        lock_request = #{dc2 => #{{dc3,lock1} => {exclusive,20}}}
+    }, Actions4),
+    ok.
 
 
 exclusive_lock_with_remote_shared_test() ->
