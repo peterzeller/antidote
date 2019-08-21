@@ -60,7 +60,7 @@
 % (higher values should give higher throughput but also higher latency if remote lock requests are necessary)
 -define(INTER_DC_LOCK_REQUEST_DELAY, 100).
 % how long to wait for locks before requesting them again
--define(INTER_DC_RETRY_DELAY, 500).
+-define(INTER_DC_RETRY_DELAY, 1500).
 
 % minimum time for holding an exclusive lock after acquiring it
 % (higher values should give higher throughput and higher tail latencies)
@@ -181,7 +181,7 @@ request(Req, Timeout, NumTries) ->
     end.
 
 % called in inter_dc_query_response
--spec on_interdc_request(#request_locks_remote{} | #on_receive_remote_locks{}) -> ok.
+-spec on_interdc_request(#request_locks_remote{} | #on_receive_remote_locks{} | #ack{}) -> ok.
 on_interdc_request(Request) ->
     spawn_link(fun() ->
         request(Request, infinity, 3)
@@ -286,7 +286,7 @@ handle_cast2(#request_locks2{lock_entries = LockEntries, read_clock = ReadClock,
 handle_info2(tick, State) ->
     Time = erlang:system_time(millisecond),
     logger:notice("tick at ~p", [antidote_lock_server_state:print_systemtime(Time)]),
-    {Actions, State2} = antidote_lock_server_state:next_actions(State, Time),
+    {Actions, State2} = antidote_lock_server_state:timer_tick(State, Time),
     run_actions(Actions, State2),
     {noreply, State2};
 handle_info2(inter_dc_retry_timeout, State) ->
@@ -400,7 +400,7 @@ send_interdc_lock_requests(RequestsByDc) ->
         end, ok, ByTime)
     end, ok, RequestsByDc).
 
--spec send_interdc_lock_request(dcid(), #request_locks_remote{} | #on_receive_remote_locks{}, integer()) -> ok.
+-spec send_interdc_lock_request(dcid(), #request_locks_remote{} | #on_receive_remote_locks{} | #ack{}, integer()) -> ok.
 send_interdc_lock_request(OtherDcID, ReqMsg, Retries) ->
     {LocalPartition, _} = log_utilities:get_key_partition(locks),
     PDCID = {OtherDcID, LocalPartition},
@@ -467,26 +467,16 @@ handoff_locks_to_other_dcs(Locks, RequesterDcId, MyDcId, AllDcIds, Snapshot, Ret
                 {error, Reason} ->
                     logger:error("Handoff transaction to ~p failed with reason ~p", [RequesterDcId, Reason]),
                     {error, Reason};
+                {ok, Time} when Updates == [] ->
+                    logger:notice("Handoff transaction to ~p SUCCESS~n no updates~n LockValues = ~p", [RequesterDcId, Updates, LocksWithValues]),
+                    {ok, Time};
                 {ok, Time} ->
                     logger:notice("Handoff transaction to ~p SUCCESS~n Updates = ~p~n LockValues = ~p", [RequesterDcId, Updates, LocksWithValues]),
-                    % calculate the new lock level of the requester:
-                    % type: [{DcId, {Lock, Kind}}]
-                    RequesterLockLevels = lists:map(
-                        fun({Lock, LockValue}) ->
-                            Kind = case lists:all(fun(Dc) -> lists:member(maps:get(Dc, LockValue, Dc), [RequesterDcId, MyDcId]) end, AllDcIds) of
-                                true -> exclusive;
-                                false -> case lists:member(maps:get(RequesterDcId, LockValue, RequesterDcId), [RequesterDcId, MyDcId]) of
-                                    true -> shared;
-                                    false -> none
-                                end
-                            end,
-                            {RequesterDcId, {Lock, Kind}}
-                        end,
-                        LocksWithValues
-                    ),
-                    request(#ack{new_lock_levels = RequesterLockLevels}, ?REQUEST_TIMEOUT, 1),
-
-
+                    antidote_lock_server_state:debug_log({event, updates_transferred, #{
+                        commit_time => antidote_lock_server_state:print_vc(Time),
+                        locks_with_values => LocksWithValues,
+                        updates => Updates
+                    }}),
                     send_interdc_lock_request(RequesterDcId, #on_receive_remote_locks{
                         snapshot_time = Time,
                         locks = Locks
@@ -524,9 +514,10 @@ run_actions(Actions, State) ->
         Printed ->
             logger:notice("run_actions ~p", [Printed])
     end,
-    {actions, HandOverActions, LockRequestActions, Replies} = Actions,
+    {actions, HandOverActions, LockRequestActions, Replies, Acks} = Actions,
     MyDcId = antidote_lock_server_state:my_dc_id(State),
     AllDcIds = dc_meta_data_utilities:get_dcs(),
+    OtherDcIds = AllDcIds -- [MyDcId],
     SnapshotTime = antidote_lock_server_state:get_snapshot_time(State),
     Self = self(),
 
@@ -550,13 +541,30 @@ run_actions(Actions, State) ->
             Reply = {ok, SnapshotTime},
 %%            logger:notice("antidote_lock_server: replying to ~p:~n  ~p", [R, Reply]),
             gen_server:reply(R, Reply)
-        end, Replies)
+        end, Replies),
+
+        % send acks
+        case Acks of
+            [] -> ok;
+            _ ->
+                lists:foreach(
+                    fun(Dc) ->
+                        send_interdc_lock_request(Dc, #ack{new_lock_levels = [{MyDcId, I} || I <- Acks]}, 3)
+                    end,
+                    OtherDcIds
+                )
+        end
+
     end),
     ok.
 
 
 handle_on_receive_remote_locks(Locks, SnapshotTime, State) ->
     logger:info("handle_on_receive_remote_locks~n Locks = ~p~n", [Locks]),
+    antidote_lock_server_state:debug_log({event, handle_on_receive_remote_locks, #{
+        commit_time => antidote_lock_server_state:print_vc(SnapshotTime),
+        locks => Locks
+    }}),
     Self = self(),
     spawn_link(fun() ->
         LockObjects = antidote_lock_crdt:get_lock_objects(Locks),
@@ -569,6 +577,12 @@ handle_on_receive_remote_locks(Locks, SnapshotTime, State) ->
                 LockValues = [antidote_lock_crdt:parse_lock_value(V) || V <- LockValuesRaw],
                 LockEntries = lists:zip(Locks, LockValues),
 %%                logger:notice("handle_on_receive_remote_locks, new lock entries:~n~p", [LockEntries]),
+                antidote_lock_server_state:debug_log({event, handle_on_receive_remote_locks, #{
+                    commit_time => antidote_lock_server_state:print_vc(SnapshotTime),
+                    read_clock => antidote_lock_server_state:print_vc(ReadClock),
+                    locks => Locks,
+                    LockEntries => LockEntries
+                }}),
                 gen_server:cast(Self, #on_receive_remote_locks2{lock_entries = LockEntries, read_clock = ReadClock})
         end
     end),
