@@ -764,7 +764,6 @@ remote_lock_requests_for_sent_locks(LocksToTransferL, State) ->
 exists_local_request(Lock, MyDcId, T, OtherDcId, Kind, State) ->
     lists:any(
         fun(S) ->
-            io:format("Comparing ~p <= ~p~n", [{S#pid_state.request_time, MyDcId}, {T, OtherDcId}]),
             TimeBefore = {S#pid_state.request_time, MyDcId} =< {T, OtherDcId},
             case orddict:find(Lock, S#pid_state.locks) of
                 {ok, {St, shared}} -> Kind == exclusive andalso (St == held orelse TimeBefore);
@@ -1532,7 +1531,10 @@ lock_level(LockValue, MyDcId, AllDcIds) ->
     end.
 
 debug_log(Term) ->
-    {ok, Log} = disk_log:open([{name, antidote_lock_server}]),
+    Log = case disk_log:open([{name, antidote_lock_server}]) of
+        {ok, L} -> L;
+        {repaired, L, _, _} -> L
+    end,
     ok = disk_log:log(Log, {erlang:system_time(millisecond), Term}),
     ok = disk_log:close(Log).
 
