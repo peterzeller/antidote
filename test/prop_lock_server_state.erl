@@ -30,22 +30,22 @@ prop_test() ->
     ?FORALL(Cmds, my_commands(),
         begin
 %%            io:format("~nRUN ~p~n", [length(Cmds)]),
-        case satisfies_preconditions(Cmds) of
-            false -> throw('input does not satisfy preconditions');
-            true ->
-            {State, Tests} = my_run_commands(Cmds, initial_state(), []),
-            Tests2 = Tests ++ [{liveness, liveness(Cmds)}],
-            ?WHENFAIL(begin
-                io:format("Commands~n"),
-                lists:foreach(fun(C) -> io:format("  ~p~n", [C]) end, Cmds),
-                io:format("State: ~p~nResult: ~p\n", [
-                    print_state(State),
-                    Tests2
-                ])
-            end,
+            case satisfies_preconditions(Cmds) of
+                false -> throw('input does not satisfy preconditions');
+                true ->
+                    {State, Tests} = my_run_commands(Cmds, initial_state(), []),
+                    Tests2 = Tests ++ [{liveness, liveness(Cmds)}],
+                    ?WHENFAIL(begin
+                        io:format("Commands~n"),
+                        lists:foreach(fun(C) -> io:format("  ~p~n", [C]) end, Cmds),
+                        io:format("State: ~p~nResult: ~p\n", [
+                            print_state(State),
+                            Tests2
+                        ])
+                    end,
 
-                aggregate(my_command_names(Cmds), conjunction(Tests2)))
-        end
+                        aggregate(my_command_names(Cmds), conjunction(Tests2)))
+            end
         end).
 
 print_state(State) ->
@@ -67,7 +67,7 @@ my_commands() ->
             ?SIZED(Size,
                 begin
                     proper_types:noshrink(
-                        my_commands(10*Size, InitialState, 1))
+                        my_commands(20 * Size, InitialState, 1))
                 end
             ),
             ?SUCHTHAT(
@@ -78,7 +78,7 @@ my_commands() ->
 satisfies_preconditions(Cmds) -> satisfies_preconditions(Cmds, initial_state()).
 
 satisfies_preconditions([], _) -> true;
-satisfies_preconditions([Cmd|Cmds], State) ->
+satisfies_preconditions([Cmd | Cmds], State) ->
     precondition(State, Cmd) andalso satisfies_preconditions(Cmds, next_state(State, ignore, Cmd)).
 
 %%my_commands() ->
@@ -174,16 +174,19 @@ needs_action(State) ->
 
 
 lock_spec() ->
-    ?LET(X, non_empty(list(lock_spec_item())), orddict:from_list(X)).
+    N = 3,
+    ?SUCHTHAT(
+        L,
+        ?LET(T,
+            tuple([lock_level() || _ <- lists:seq(1, N)]),
+            [{L, K} || {L, K} <- [{list_to_atom("lock" ++ integer_to_list(I)), element(I, T)}  || I <- lists:seq(1, N)], K /= none]),
+        L /= []).
 
-lock_spec_item() ->
-    {lock(), lock_level()}.
-
-lock() ->
-    oneof([lock1, lock2, lock3]).
+%%lock() ->
+%%    oneof([lock1, lock2, lock3]).
 
 lock_level() ->
-    oneof([exclusive]).
+    oneof([none, exclusive]).
 
 
 %% Picks whether a command should be valid under the current state.
