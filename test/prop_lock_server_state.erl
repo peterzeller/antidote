@@ -399,7 +399,7 @@ liveness(Cmds) ->
 check_liveness([]) ->
     true;
 check_liveness([{request, Pid, _R, _Locks} | Rest]) ->
-    find_reply(Pid, Rest, 500)
+    find_reply(Pid, Rest, 1000)
         andalso check_liveness(Rest);
 check_liveness([_ | Rest]) ->
     check_liveness(Rest).

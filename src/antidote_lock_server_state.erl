@@ -465,83 +465,6 @@ merge_lock_request_actions_for_dc(A1, A2) ->
     maps:fold(Merge, A2, A1).
 
 
-%% Tries to acquire the locks for the given Pid
-%% Res is true iff all locks were newly acquired.
-%% Precondition: all required locks are available locally
--spec try_acquire_locks(integer(), pid(), state()) -> {boolean(), state()}.
-try_acquire_locks(CurrentTime, Pid, State) ->
-    case maps:find(Pid, State#state.by_pid) of
-        {ok, PidState} ->
-            LockStates = PidState#pid_state.locks,
-            try_acquire_lock_list(CurrentTime, Pid, LockStates, PidState#pid_state.request_time, false, State);
-        error ->
-            {false, State}
-    end.
-
--spec try_acquire_lock_list(integer(), pid(), orddict:orddict(antidote_locks:lock(), lock_state_with_kind()), integer(), boolean(), state()) -> {boolean(), state()}.
-try_acquire_lock_list(CurrentTime, Pid, LockStates, RequestTime, Changed, State) ->
-    case LockStates of
-        [] -> {Changed, State};
-        [{Lock, {LockState, Kind}} | LockStatesRest] ->
-            case LockState of
-                held ->
-                    try_acquire_lock_list(CurrentTime, Pid, LockStatesRest, RequestTime, Changed, State);
-                waiting ->
-                    LS = lock_held_state(Lock, State),
-                    CanAcquireLock =
-                        (LS == none orelse (Kind == shared andalso LS == shared)),
-                    case CanAcquireLock of
-                        true ->
-                            % acquire lock
-                            NewState = update_lock_state(State, Pid, Lock, {held, Kind}),
-                            try_acquire_lock_list(CurrentTime, Pid, LockStatesRest, RequestTime, true, NewState);
-                        false ->
-                            {false, State}
-                    end;
-                waiting_remote ->
-                    {false, State}
-            end
-    end.
-
-%%% checks if there is a local request for an exclusive lock in state waiting_remote with
-%%% a request time < than the given request time
-%%-spec is_waiting_remote_exclusive(antidote_locks:lock(), integer(), dcid(), state()) -> boolean().
-%%is_waiting_remote_exclusive(Lock, OtherRequestTime, OtherDc, State) ->
-%%    lists:any(fun(PidState) ->
-%%        % adding dc-id in comparison to resolve system-time collisions
-%%        {PidState#pid_state.request_time, State#state.dc_id} < {OtherRequestTime, OtherDc}
-%%            andalso orddict:find(Lock, PidState#pid_state.locks) == {ok, {waiting_remote, exclusive}}
-%%    end, maps:values(State#state.by_pid)).
-
-update_lock_state(State, Pid, Lock, LockState) ->
-    State#state{
-        by_pid = maps:update_with(Pid, fun(S) ->
-            S#pid_state{
-                locks = orddict:store(Lock, LockState, S#pid_state.locks)
-            }
-        end, State#state.by_pid)
-    }.
-
-
-
--spec lock_held_state(antidote_locks:lock(), state()) -> shared | exclusive | none.
-lock_held_state(Lock, State) ->
-    lock_held_state_iter(Lock, maps:iterator(State#state.by_pid)).
-
-lock_held_state_iter(Lock, Iter) ->
-    case maps:next(Iter) of
-        none -> none;
-        {_Pid, PidState, NextIterator} ->
-            case orddict:find(Lock, PidState#pid_state.locks) of
-                {ok, {held, LockKind}} ->
-                    % we can return the first entry we find, since the two kinds exclude each other
-                    LockKind;
-                _ ->
-                    lock_held_state_iter(Lock, NextIterator)
-            end
-    end.
-
-
 % calculates for which data centers there are still missing locks
 -spec missing_locks_by_dc(list(dcid()), dcid(), [{antidote_locks:lock_spec(), antidote_lock_server:lock_crdt_value()}]) -> #{dcid() => antidote_locks:lock_spec()}.
 missing_locks_by_dc(AllDcIds, MyDcId, Locks) ->
@@ -642,41 +565,108 @@ update_waiting_remote_list(AllDcs, MyDcId, LockValues, Locks) ->
 % determines the next actions to perform
 -spec next_actions(state(), integer()) -> {actions(), state()}.
 next_actions(State, CurrentTime) ->
-
-    %--logger:notice("next_actions ~p~n ~p", [print_systemtime(CurrentTime), print_state(State)]),
-
-    % First try to serve remote requests:
-    {Actions, State2} = handle_remote_requests(State, CurrentTime),
-
-    %--logger:notice("handle_remote_requests actions~n ~p", [print_actions(Actions)]),
+    {Actions1, State2} = handle_remote_requests(State, CurrentTime),
+    {Actions2, State3} = handle_local_requests(State2, CurrentTime),
+    {merge_actions(Actions1, Actions2), State3}.
 
 
-    % sort processes by request time, so that the processes waiting the longest will
-    % acquire their locks first
-    Pids = [Pid || {Pid, _} <- lists:sort(fun compare_by_request_time/2, maps:to_list(State#state.by_pid))],
+-spec handle_local_requests(state(), milliseconds()) -> {actions(), state()}.
+handle_local_requests(State, CurrentTime) ->
+    PidStates = State#state.by_pid,
+    % locks currently held:
+    HeldLocks = ordsets:from_list(
+        lists:flatmap(fun(PS) ->
+            lists:flatmap(fun
+                ({L, {held, K}}) -> [{L, K}];
+                (_) -> []
+            end, PS#pid_state.locks)
+        end, maps:values(PidStates))
+    ),
 
-    % try to acquire locks for local requests
-    {Actions2, State3} = lists:foldl(fun(Pid, {AccActions, S}) ->
-        {AllAcquired, S2} = try_acquire_locks(CurrentTime, Pid, S),
-        case AllAcquired of
-            true ->
-                PidState = maps:get(Pid, S#state.by_pid),
-                NewReplies = [PidState#pid_state.requester | AccActions#actions.replies],
-                S3 = set_lock_acquired_time(CurrentTime, PidState#pid_state.locks, S2),
-                {AccActions#actions{replies = NewReplies}, S3};
-            false ->
-                {AccActions, S2}
-        end
-    end, {Actions, State2}, Pids),
+    % requests without waiting-remote or held state (all waiting)
+    A = maps:filter(fun(_Pid, PS) ->
+        lists:all(fun({_L, {S, _K}}) -> S == waiting end, PS#pid_state.locks)
+    end, PidStates),
+    % requests not waiting for held locks
+    B = maps:filter(fun(_Pid, PS) ->
+        lists:all(fun({L, {_, Kind}}) ->
+            not ordsets:is_element({L, exclusive}, HeldLocks)
+                andalso (Kind == shared orelse not ordsets:is_element({L, shared}, HeldLocks))
+        end, PS#pid_state.locks)
+    end, A),
 
-%%    case print_actions(Actions2) of
-%%        [] when State3 == State ->
-%%            ok;
-%%        PrintedActions ->
-%%            logger:notice("next_actions ~n PreState  = ~p~n PostState = ~p~n Actions = ~p", [print_state(State), print_state(State3), PrintedActions])
-%%    end,
 
-    {Actions2, State3}.
+    % for each lock in A the minimum request time {time, pid}
+    AMinRequestTime = min_request_times(A, shared),
+    AMinRequestTimeExclusive = min_request_times(A, exclusive),
+
+    AMinRequestTimeExclusive =
+        antidote_list_utils:group_by(
+            fun({L, _T}) -> L end,
+            fun({_L, T}) -> T end,
+            fun({_L, T1}, T2) -> min(T1, T2) end,
+            lists:flatmap(fun({Pid, PS}) ->
+                lists:flatmap(fun
+                    ({L, {_, exclusive}}) ->
+                        [{L, {PS#pid_state.request_time, Pid}}];
+                    (_) ->
+                        []
+                end, PS#pid_state.locks)
+            end, maps:to_list(A))),
+
+    % remove requests where another process from A also wants the same lock
+    % and has a smaller request time
+    C = maps:filter(fun(Pid, PS) ->
+        lists:all(fun
+            ({L, {_, shared}}) ->
+                maps:get(L, AMinRequestTimeExclusive, [infty]) >= {PS#pid_state.request_time, Pid};
+            ({L, {_, exclusive}}) ->
+                maps:get(L, AMinRequestTime) >= {PS#pid_state.request_time, Pid}
+        end, PS#pid_state.locks)
+    end, B),
+
+
+    % acquire all locks from C
+    Actions = #actions{
+        replies = [P#pid_state.requester || P <- maps:values(C)]
+    },
+
+
+    CHeld = maps:map(fun(_Pid, PS) ->
+        PS#pid_state{
+            locks = lists:map(fun({L, {_, K}}) -> {L, {held, K}} end, PS#pid_state.locks)
+        }
+    end, C),
+
+    State2 = State#state{
+        by_pid = maps:merge(State#state.by_pid, CHeld)
+    },
+    State3 = maps:fold(fun(_Pid, PS, Acc) ->
+        set_lock_acquired_time(CurrentTime, PS#pid_state.locks, Acc)
+    end, State2, CHeld),
+
+    {Actions, State3}.
+
+
+%% Calculates the minimum request time for each lock
+%% The time is tupled with pid to get a total order
+%% Only includes locks with lock kind >= LockKind
+-spec min_request_times(#{pid() => #pid_state{}}, antidote_locks:lock_kind()) -> #{antidote_locks:lock() => {milliseconds(), pid()}}.
+min_request_times(A, LockKind) ->
+    antidote_list_utils:group_by(
+        fun({L, _T}) -> L end,
+        fun({_L, T}) -> T end,
+        fun({_L, T1}, T2) -> min(T1, T2) end,
+        lists:flatmap(fun({Pid, PS}) ->
+            lists:flatmap(fun({L, {_, K}}) ->
+                case max_lock_kind(LockKind, K) == K of
+                    true ->
+                        [{L, {PS#pid_state.request_time, Pid}}];
+                    false ->
+                        []
+                end
+            end, PS#pid_state.locks)
+        end, maps:to_list(A))).
 
 -spec handle_remote_requests(state(), milliseconds()) -> {actions(), state()}.
 handle_remote_requests(State, CurrentTime) ->
@@ -806,10 +796,6 @@ get_remote_waiting_locks(State) ->
     PidStates = maps:values(State#state.by_pid),
     Locks = lists:flatmap(fun(P) -> [L || {L, {waiting_remote, _}} <- P#pid_state.locks] end, PidStates),
     ordsets:from_list(Locks).
-
-
-compare_by_request_time({Pid1, PidState1}, {Pid2, PidState2}) ->
-    {PidState1#pid_state.request_time, Pid1} =< {PidState2#pid_state.request_time, Pid2}.
 
 
 % changes lock state from waiting to waiting_remote for all given locks
