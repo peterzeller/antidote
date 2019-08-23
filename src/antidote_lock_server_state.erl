@@ -869,7 +869,7 @@ merge_lock_request_actions(A, B) ->
 -spec merge_handover_actions(#{dcid() => antidote_locks:lock_spec()}, #{dcid() => antidote_locks:lock_spec()}) -> #{dcid() => antidote_locks:lock_spec()}.
 merge_handover_actions(H1, H2) ->
     maps:fold(fun(Dc, LS1, Acc) ->
-        maps:update_with(Dc, fun(LS2) -> ordsets:union(LS1, LS2) end, [], Acc)
+        maps:update_with(Dc, fun(LS2) -> ordsets:union(LS1, LS2) end, LS1, Acc)
     end, H1, H2).
 
 -spec merge_actions(actions(), actions()) -> actions().

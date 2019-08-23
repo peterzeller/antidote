@@ -30,6 +30,9 @@ prop_test() ->
     ?FORALL(Cmds, my_commands(),
         begin
 %%            io:format("~nRUN ~p~n", [length(Cmds)]),
+        case satisfies_preconditions(Cmds) of
+            false -> throw('input does not satisfy preconditions');
+            true ->
             {State, Tests} = my_run_commands(Cmds, initial_state(), []),
             Tests2 = Tests ++ [{liveness, liveness(Cmds)}],
             ?WHENFAIL(begin
@@ -40,7 +43,9 @@ prop_test() ->
                     Tests2
                 ])
             end,
+
                 aggregate(my_command_names(Cmds), conjunction(Tests2)))
+        end
         end).
 
 print_state(State) ->
@@ -186,6 +191,8 @@ precondition(State, {tick, _R, _T}) ->
     Res = needs_action(State) == [],
 %%    io:format("precondition tick ~p: ~p~n State = ~p~n", [T, Res, print_state(State)]),
     Res;
+precondition(State, {action, A}) ->
+    lists:member(A, State#state.future_actions);
 precondition(#state{}, _Action) ->
     true.
 
