@@ -474,7 +474,7 @@ merge_lock_request_actions_for_dc(A1, A2) ->
 % calculates for which data centers there are still missing locks
 -spec missing_locks(list(dcid()), dcid(), [{antidote_locks:lock_spec_item(), antidote_lock_server:lock_crdt_value()}]) -> antidote_locks:lock_spec().
 missing_locks(AllDcIds, MyDcId, Locks) ->
-    ordsets:from_list([{L,K} || {{L,K},LV} <- Locks, not owns_lock(AllDcIds, MyDcId, K, LV)]).
+    ordsets:from_list([{L, K} || {{L, K}, LV} <- Locks, not owns_lock(AllDcIds, MyDcId, K, LV)]).
 
 % checks if we own the given lock
 -spec owns_lock(list(dcid()), dcid(), antidote_locks:lock_kind(), antidote_lock_server:lock_crdt_value()) -> boolean().
@@ -676,8 +676,6 @@ handle_remote_requests(State, CurrentTime) ->
     Locks = [L || {{_Dc, L}, {_K, _T}} <- LocksToTransferL],
 
 
-    RequestAgainRemote = remote_lock_requests_for_sent_locks(LocksToTransferL, State),
-
     % check local requests and get the locks that must be requested again
     RequestAgainLocal = get_local_waiting_requests(LocksToTransferL, State),
 
@@ -690,7 +688,7 @@ handle_remote_requests(State, CurrentTime) ->
 
     Actions = #actions{
         hand_over    = HandoverActions,
-        lock_request = merge_lock_request_actions(RequestAgainLocal, RequestAgainRemote)
+        lock_request = RequestAgainLocal
     },
 
     State3 = State2#state{
@@ -710,21 +708,6 @@ exists_conflicting_remote_request(Dc, L, K, T, State) ->
             andalso {T2, Dc2} =< {T, Dc}
     end, maps:to_list(State#state.remote_requests)).
 
-
-
--spec remote_lock_requests_for_sent_locks([{{dcid(), antidote_locks:lock()}, {antidote_locks:lock_kind(), milliseconds()}}], state()) -> lock_request_actions().
-remote_lock_requests_for_sent_locks(LocksToTransferL, State) ->
-    List = lists:flatmap(fun({{Dc, L}, {K, T}}) ->
-        lists:flatmap(fun({{Dc2, L2}, {K2, _T2}}) ->
-            if
-                L /= L2 -> [];
-                Dc == Dc2 -> [];
-                K == shared andalso K2 == shared -> [];
-                true -> [{Dc2, {{Dc, L}, {K, T}}}]
-            end
-        end, LocksToTransferL)
-    end, maps:to_list(State#state.remote_requests)),
-    list_to_lock_request_actions(List).
 
 % checks if there is a conflicting local request for the given lock
 % with time <= T or already held
@@ -1178,8 +1161,7 @@ same_time_remote_test() ->
     % when R1 releases it's lock, the remote dc2 gets it
     {Actions4, _S4} = remove_locks(99, p1, vectorclock:new(), S3),
     ?assertEqual(#actions{
-        hand_over    = #{dc2 => [{lock1, exclusive}]},
-        lock_request = #{dc2 => #{{dc3, lock1} => {exclusive, 20}}}
+        hand_over = #{dc2 => [{lock1, exclusive}]}
     }, Actions4),
     ok.
 
@@ -1225,8 +1207,7 @@ same_time_remote_local2_test() ->
     ?assertEqual(#actions{
         hand_over    = #{dc1 => [{lock1, exclusive}]},
         lock_request = #{dc1 =>
-        #{{dc2, lock1} => {exclusive, 20},
-            {dc3, lock1} => {exclusive, 11}}}}, Actions4),
+        #{{dc3, lock1} => {exclusive, 11}}}}, Actions4),
     ok.
 
 exclusive_lock_with_remote_shared_test() ->
