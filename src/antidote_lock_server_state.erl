@@ -172,24 +172,30 @@ new_request(Requester, RequestTime, SnapshotTime, AllDcIds, LockEntries, State) 
     {RequesterPid, _} = Requester,
     MyDcId = my_dc_id(State),
     Locks = [L || {L, _} <- LockEntries],
-    RequestsByDc = missing_locks_by_dc(AllDcIds, MyDcId, LockEntries),
+    MissingLocks = missing_locks(AllDcIds, MyDcId, LockEntries),
     % if remote requests are necessary, wait longer
-    RequestTime2 = case maps:size(RequestsByDc) of
-        0 -> RequestTime;
+    RequestTime2 = case MissingLocks of
+        [] -> RequestTime;
         _ -> RequestTime + State#state.remote_request_delay
     end,
-    % add time and dc to remote requests
-    RequestsByDc2 = maps:map(fun(_Dc, V) -> maps:from_list([{{MyDcId, L}, {K, RequestTime2}} || {L, K} <- V]) end, RequestsByDc),
+
     State1 = add_process(Requester, RequestTime2, Locks, State),
     State2 = set_snapshot_time(SnapshotTime, State1),
-    debug_result(case maps:size(RequestsByDc) of
-        0 ->
+    debug_result(case MissingLocks of
+        [] ->
             % we have all locks locally
             next_actions(State2, RequestTime);
         _ ->
             % tell other data centers that we need locks
             % for shared locks, ask to get own lock back
             % for exclusive locks, ask everyone to give their lock
+
+
+            % add time and dc to remote requests
+            OtherDcs = AllDcIds -- [MyDcId],
+
+            LockRequestActions = maps:from_list([{{MyDcId, L}, {K, RequestTime2}} || {L, K} <- MissingLocks]),
+            RequestsByDc2 = maps:from_list([{Dc, LockRequestActions} || Dc <- OtherDcs]),
 
             WaitingLocks = ordsets:from_list([L || {{_, L}, _} <- lists:flatmap(fun maps:to_list/1, maps:values(RequestsByDc2))]),
             State3 = set_lock_waiting_state(RequesterPid, WaitingLocks, State2, waiting, waiting_remote),
@@ -466,47 +472,19 @@ merge_lock_request_actions_for_dc(A1, A2) ->
 
 
 % calculates for which data centers there are still missing locks
--spec missing_locks_by_dc(list(dcid()), dcid(), [{antidote_locks:lock_spec(), antidote_lock_server:lock_crdt_value()}]) -> #{dcid() => antidote_locks:lock_spec()}.
-missing_locks_by_dc(AllDcIds, MyDcId, Locks) ->
-    Missing = lists:flatmap(fun({{_Lock, Kind} = I, LockValue}) -> [{Dc, I} || Dc <- missing_locks(AllDcIds, MyDcId, Kind, LockValue)] end, Locks),
-    case Missing of
-        [] -> maps:new();
-        _ ->
-            antidote_list_utils:group_by_first(Missing)
-    end.
+-spec missing_locks(list(dcid()), dcid(), [{antidote_locks:lock_spec_item(), antidote_lock_server:lock_crdt_value()}]) -> antidote_locks:lock_spec().
+missing_locks(AllDcIds, MyDcId, Locks) ->
+    ordsets:from_list([{L,K} || {{L,K},LV} <- Locks, not owns_lock(AllDcIds, MyDcId, K, LV)]).
 
-% computes which locks are still missing
-% returns a list of current owners for this lock
--spec missing_locks(list(dcid()), dcid(), antidote_locks:lock_kind(), antidote_lock_server:lock_crdt_value()) -> [dcid()].
-missing_locks(AllDcIds, MyDcId, Kind, LockValue) ->
-    Res = case Kind of
+% checks if we own the given lock
+-spec owns_lock(list(dcid()), dcid(), antidote_locks:lock_kind(), antidote_lock_server:lock_crdt_value()) -> boolean().
+owns_lock(AllDcIds, MyDcId, Kind, LockValue) ->
+    case Kind of
         shared ->
-            %check that we own our own entry
-            case maps:find(MyDcId, LockValue) of
-                {ok, MyDcId} ->
-                    % if we own our own entry, we need no further requests
-                    [];
-                error ->
-                    % default value: owned by us
-                    [];
-                _ ->
-                    % otherwise, request to get lock back from current owner:
-                    CurrentOwner = maps:get(MyDcId, LockValue),
-                    [CurrentOwner]
-            end;
+            maps:get(MyDcId, LockValue, MyDcId) == MyDcId;
         exclusive ->
-            % check that we own all datacenters
-            case lists:all(fun(Dc) -> maps:get(Dc, LockValue, Dc) == MyDcId end, AllDcIds) of
-                true ->
-                    % if we own all lock parts, we need no further requests
-                    [];
-                false ->
-                    % otherwise, request all parts from the current owners:
-                    CurrentOwners = [maps:get(Dc, LockValue, Dc) || Dc <- AllDcIds],
-                    lists:usort(CurrentOwners) -- [MyDcId]
-            end
-    end,
-    Res.
+            lists:all(fun(Dc) -> maps:get(Dc, LockValue, Dc) == MyDcId end, AllDcIds)
+    end.
 
 
 % sets the given locks to the waiting_remote state
@@ -548,8 +526,8 @@ update_waiting_remote(AllDcs, LockValues, State) ->
 update_waiting_remote_list(AllDcs, MyDcId, LockValues, Locks) ->
     [{L, case maps:find(L, LockValues) of
         {ok, Value} ->
-            NewS = case missing_locks(AllDcs, MyDcId, K, Value) of
-                [] ->
+            NewS = case owns_lock(AllDcs, MyDcId, K, Value) of
+                true ->
                     case S of
                         waiting_remote -> waiting;
                         _ -> S
@@ -958,7 +936,7 @@ shared_lock_fail_test() ->
     % data center 3 has our lock, so we need to request it
     {Actions, _S2} = new_request(R1, 10, undefined, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc3, dc2 => dc2, dc3 => dc3}}], S1),
     ?assertEqual(#{}, Actions#actions.hand_over),
-    ?assertEqual(#{dc3 => #{{dc1, lock1} => {shared, 11}}}, Actions#actions.lock_request),
+    ?assertEqual(#{dc2 => #{{dc1, lock1} => {shared, 11}}, dc3 => #{{dc1, lock1} => {shared, 11}}}, Actions#actions.lock_request),
     ?assertEqual([], Actions#actions.replies),
     ok.
 
@@ -968,7 +946,7 @@ shared_lock_fail2_test() ->
     % data center 3 has our lock, so we need to request it
     {Actions, _S2} = new_request(R1, 10, undefined, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc3, dc2 => dc1, dc3 => dc3}}], S1),
     ?assertEqual(#{}, Actions#actions.hand_over),
-    ?assertEqual(#{dc3 => #{{dc1, lock1} => {shared, 11}}}, Actions#actions.lock_request),
+    ?assertEqual(#{dc2 => #{{dc1, lock1} => {shared, 11}}, dc3 => #{{dc1, lock1} => {shared, 11}}}, Actions#actions.lock_request),
     ?assertEqual([], Actions#actions.replies),
     ok.
 
@@ -978,7 +956,7 @@ shared_lock_missing_local_test() ->
     R1 = {p1, t1},
     % data center 3 has our lock, so we need to request it
     {Actions1, S1} = new_request(R1, 10, undefined, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc3, dc2 => dc1, dc3 => dc3}}], SInit),
-    ?assertEqual(#actions{lock_request = #{dc3 => #{{dc1, lock1} => {shared, 11}}}}, Actions1),
+    ?assertEqual(#actions{lock_request = #{dc2 => #{{dc1, lock1} => {shared, 11}}, dc3 => #{{dc1, lock1} => {shared, 11}}}}, Actions1),
 
     % later we receive the lock from dc3 and we can get the lock
     {Actions2, _S2} = on_remote_locks_received(99, #{}, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc3}}], S1),
@@ -1040,7 +1018,7 @@ shared_locks_missing_local_test() ->
         {{lock3, shared}, #{dc1 => dc1, dc2 => dc2, dc3 => dc3}}
     ],
     {Actions1, S1} = new_request(R1, 10, undefined, [dc1, dc2, dc3], RLocks, SInit),
-    ?assertEqual(#actions{lock_request = #{dc2 => #{{dc1, lock2} => {shared, 11}}}}, Actions1),
+    ?assertEqual(#actions{lock_request = #{dc2 => #{{dc1, lock2} => {shared, 11}}, dc3 => #{{dc1, lock2} => {shared, 11}}}}, Actions1),
 
     % later we receive the lock from dc2 and we can get the lock
     {Actions2, _S2} = on_remote_locks_received(99, undefined, [dc1, dc2, dc3], [{{lock2, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc3}}], S1),
@@ -1089,7 +1067,7 @@ exclusive_lock_fail_test() ->
     R1 = {p1, t1},
     {Actions, _S2} = new_request(R1, 10, vectorclock:new(), [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc2}}], S1),
     ?assertEqual(#{}, Actions#actions.hand_over),
-    ?assertEqual(#{dc2 => #{{dc1, lock1} => {exclusive, 11}}}, Actions#actions.lock_request),
+    ?assertEqual(#{dc2 => #{{dc1, lock1} => {exclusive, 11}}, dc3 => #{{dc1, lock1} => {exclusive, 11}}}, Actions#actions.lock_request),
     ?assertEqual([], Actions#actions.replies),
     ok.
 
@@ -1359,13 +1337,13 @@ locks_request_again_test() ->
     ok.
 
 missing_locks_empty_test() ->
-    Missing = missing_locks([dc1, dc2, dc3], dc1, exclusive, #{}),
-    ?assertEqual([dc2, dc3], Missing),
+    OwnsLock = owns_lock([dc1, dc2, dc3], dc1, exclusive, #{}),
+    ?assertEqual(false, OwnsLock),
     ok.
 
 missing_locks_by_dc_empty_test() ->
-    Missing = missing_locks_by_dc([dc1, dc2, dc3], dc1, [{{lock1, exclusive}, #{}}]),
-    ?assertEqual(#{dc2 => [{lock1, exclusive}], dc3 => [{lock1, exclusive}]}, Missing),
+    Missing = missing_locks([dc1, dc2, dc3], dc1, [{{lock1, exclusive}, #{}}]),
+    ?assertEqual([{lock1, exclusive}], Missing),
     ok.
 
 
@@ -1381,8 +1359,8 @@ locks_missing_local_retry_test() ->
     {Actions1, S1} = new_request(R1, 10, undefined, [dc1, dc2, dc3], RLocks1, SInit),
     ?assertEqual(#actions{lock_request =
     #{
-        dc2 => #{{dc1, lock2} => {exclusive, 11}, {dc1, lock3} => {shared, 11}},
-        dc3 => #{{dc1, lock1} => {shared, 11}, {dc1, lock2} => {exclusive, 11}}
+        dc2 => #{{dc1, lock1} => {shared, 11}, {dc1, lock2} => {exclusive, 11}, {dc1, lock3} => {shared, 11}},
+        dc3 => #{{dc1, lock1} => {shared, 11}, {dc1, lock2} => {exclusive, 11}, {dc1, lock3} => {shared, 11}}
     }},
         Actions1),
 
@@ -1395,7 +1373,7 @@ locks_missing_local_retry_test() ->
     {Actions2, S2} = new_request(R2, 20, undefined, [dc1, dc2, dc3], RLocks2, S1),
     ?assertEqual(#actions{lock_request = #{
         dc2 => #{{dc1, lock1} => {exclusive, 21}, {dc1, lock4} => {shared, 21}},
-        dc3 => #{{dc1, lock1} => {exclusive, 21}}}}, Actions2),
+        dc3 => #{{dc1, lock1} => {exclusive, 21}, {dc1, lock4} => {shared, 21}}}}, Actions2),
 
     % request again later:
     {StillWaiting3, Actions3} = retries_for_waiting_remote(25, 12, dc1, [dc2, dc3], S2),
