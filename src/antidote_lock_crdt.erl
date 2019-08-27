@@ -37,7 +37,7 @@
 % the map stores lock-part to current owner
 -export_type([value/0]).
 
--export([get_lock_objects/1, get_lock_object/1, parse_lock_value/1, make_lock_updates/2]).
+-export([get_lock_objects/1, get_lock_object/1, parse_lock_value/1, make_lock_updates/2, parse_lock_values/1]).
 
 -type value() :: #{dcid() => dcid()}.
 
@@ -59,6 +59,10 @@ get_lock_object(Lock) ->
 -spec parse_lock_value(antidote_crdt_map_rr:value()) -> value().
 parse_lock_value(RawV) ->
     maps:from_list([{K, read_mv(V)} || {{K, _}, V} <- RawV]).
+
+-spec parse_lock_values([antidote_crdt_map_rr:value()]) -> [value()].
+parse_lock_values(RawVs) ->
+    [parse_lock_value(V) || V <- RawVs].
 
 
 read_mv([V]) -> V;
