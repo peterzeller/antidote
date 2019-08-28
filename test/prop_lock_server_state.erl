@@ -28,22 +28,30 @@
 prop_test() ->
     ?FORALL(Cmds, my_commands(),
         begin
-%%            io:format("~nRUN ~p~n", [length(Cmds)]),
-            case satisfies_preconditions(Cmds) of
-                false -> throw('input does not satisfy preconditions');
-                true ->
-                    {State, Tests} = my_run_commands(Cmds, initial_state(), []),
-                    Tests2 = Tests ++ [{liveness, liveness(Cmds)}],
+            try
+                case satisfies_preconditions(Cmds) of
+                    false -> throw('input does not satisfy preconditions');
+                    true ->
+
+                        {State, Tests} = my_run_commands(Cmds, initial_state(), []),
+                        Tests2 = Tests ++ [{liveness, liveness(Cmds)}],
+                        ?WHENFAIL(begin
+                            io:format("Commands~n"),
+                            lists:foreach(fun(C) -> io:format("  ~p~n", [C]) end, Cmds),
+                            io:format("State: ~p~nResult: ~p\n", [
+                                print_state(State),
+                                Tests2
+                            ])
+                        end, aggregate(my_command_names(Cmds), conjunction(Tests2)))
+
+                end
+            catch
+                T:E:S ->
                     ?WHENFAIL(begin
                         io:format("Commands~n"),
                         lists:foreach(fun(C) -> io:format("  ~p~n", [C]) end, Cmds),
-                        io:format("State: ~p~nResult: ~p\n", [
-                            print_state(State),
-                            Tests2
-                        ])
-                    end,
-
-                        aggregate(my_command_names(Cmds), conjunction(Tests2)))
+                        io:format("ERROR ~p, ~p~n ~p~n", [T, E, S])
+                    end, false)
             end
         end).
 
@@ -75,9 +83,7 @@ my_commands() ->
                 satisfies_preconditions(S)))).
 
 satisfies_preconditions(Cmds) ->
-    Res = satisfies_preconditions(Cmds, initial_state()),
-    io:format("satisfies_preconditions -> ~p~n", [Res]),
-    Res.
+    satisfies_preconditions(Cmds, initial_state()).
 
 satisfies_preconditions([], _) -> true;
 satisfies_preconditions([Cmd | Cmds], State) ->
@@ -99,12 +105,16 @@ my_commands(Size, State, Count) when is_integer(Size) ->
                 ?SUCHTHAT(X, command(State),
                     precondition(State, X)),
                 begin
-%%                    io:format(user, "  Running Command ~p~n", [Cmd]),
-                    NextState = next_state(State, ignore, Cmd),
+                    try NextState = next_state(State, ignore, Cmd),
                     ?LET(
                         Cmds,
                         my_commands(Size - 1, NextState, Count + 1),
                         [Cmd | Cmds])
+                    catch
+                        E:T:R ->
+                            io:format("ERROR ~p, ~p~n ~p~n", [E, T, R]),
+                            [Cmd]
+                    end
                 end)}
         ])).
 
@@ -149,7 +159,6 @@ initial_state(R) ->
     }.
 
 command(State) ->
-%%    io:format("Future actions at ~p: ~p~n", [State#state.time, State#state.future_actions]),
     NeedsTick = [R || R <- replicas(), RS <- [maps:get(R, State#state.replica_states)], RS#replica_state.time + 50 < State#state.time],
     NeedsActions = needs_action(State),
     if
@@ -193,13 +202,7 @@ lock_level() ->
 
 %% Picks whether a command should be valid under the current state.
 precondition(State, {tick, _R, _T}) ->
-    Res = needs_action(State) == [],
-    io:format("precondition tick -> ~p~n", [Res]),
-    Res;
-%%precondition(State, {action, A}) ->
-%%    Res = lists:member(A, State#state.future_actions),
-%%    io:format("precondition action -> ~p~n Action = ~p~n FutAct = ~p~n", [Res, A, State#state.future_actions]),
-%%    Res;
+    needs_action(State) == [];
 precondition(#state{}, _Action) ->
     true.
 
@@ -243,13 +246,13 @@ next_state(State, _Res, {request, Pid, Replica, LockSpec}) ->
     State2 = State#state{
         replica_states = maps:put(Replica, Rs#replica_state{
             lock_server_state = NewRs,
-            pid_states        = maps:put(Pid, #pid_state{
-                status         = waiting,
+            pid_states = maps:put(Pid, #pid_state{
+                status = waiting,
                 requested_time = State#state.time,
-                spec           = LockSpec
+                spec = LockSpec
             }, Rs#replica_state.pid_states)
         }, State#state.replica_states),
-        max_pid        = max(Pid, State#state.max_pid)
+        max_pid = max(Pid, State#state.max_pid)
     },
     State3 = add_actions(State2, Replica, Actions),
     State3;
@@ -258,10 +261,10 @@ next_state(State, _Res, {tick, Replica, DeltaTime}) ->
     NewTime = State#state.time + DeltaTime,
     {Actions, NewRs} = antidote_lock_server_state:timer_tick(Rs#replica_state.lock_server_state, NewTime),
     State2 = State#state{
-        time           = NewTime,
+        time = NewTime,
         replica_states = maps:put(Replica, Rs#replica_state{
             lock_server_state = NewRs,
-            time              = NewTime
+            time = NewTime
         }, State#state.replica_states)
     },
     add_actions(State2, Replica, Actions);
@@ -273,19 +276,16 @@ next_state(State, _Res, {action, {T1, Dc1, Action1}}) ->
             State2 = State#state{
                 future_actions = State#state.future_actions -- [{T, Dc, Action}]
             },
-            io:format("run_action(~p)~n", [Action]),
             run_action(State2, Dc, Action)
     end.
 
 
 
 run_action(State, Dc, {read_crdt_state, SnapshotTime, Objects, Data}) ->
-    io:format("read_crdt_state ~p~n", [Objects]),
     % TODO it is not necessary to read exactly from snapshottime
     ReadSnapshot = SnapshotTime,
     % collect all updates <= SnapshotTime
     CrdtStates = calculate_crdt_states(ReadSnapshot, Objects, State),
-    io:format("CrdtStates = ~p~n", [CrdtStates]),
     ReadResults = [antidote_crdt:value(Type, CrdtState) || {{_, Type, _}, CrdtState} <- CrdtStates],
     ReplicaState = maps:get(Dc, State#state.replica_states),
     LockServerState = ReplicaState#replica_state.lock_server_state,
@@ -296,7 +296,6 @@ run_action(State, Dc, {read_crdt_state, SnapshotTime, Objects, Data}) ->
     State2 = State#state{
         replica_states = maps:put(Dc, ReplicaState2, State#state.replica_states)
     },
-    io:format("read_crdt_state Actions = ~p~n", [Actions]),
     add_actions(State2, Dc, Actions);
 run_action(State, Dc, {send_inter_dc_message, Receiver, Message}) ->
     % deliver interdc message
@@ -328,11 +327,11 @@ run_action(State, Dc, {update_crdt_state, SnapshotTime, Updates, Data}) ->
     {Actions, NewLockServerState} = antidote_lock_server_state:on_complete_crdt_update(State#state.time, Data, NewUpdateSnapshot, LockServerState),
 
     NewReplicaState = ReplicaState#replica_state{
-        snapshot_time     = NewUpdateSnapshot,
+        snapshot_time = NewUpdateSnapshot,
         lock_server_state = NewLockServerState
     },
     State2 = State#state{
-        crdt_effects   = [{NewUpdateSnapshot, Effects} | State#state.crdt_effects],
+        crdt_effects = [{NewUpdateSnapshot, Effects} | State#state.crdt_effects],
         replica_states = maps:put(Dc, NewReplicaState, State#state.replica_states)
     },
 
