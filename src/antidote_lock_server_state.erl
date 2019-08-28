@@ -1023,6 +1023,46 @@ set_snapshot_time(Time, State) ->
 merge_snapshot_time(V1, V2) -> vectorclock:max([V1, V2]).
 
 
+
+
+-spec get_acquired_locks(#{antidote_locks:lock() => antidote_lock_crdt:value()}, dcid(), [dcid()]) -> [antidote_locks:lock_spec_item()].
+get_acquired_locks(LockValues, MyDcId, AllDcs) ->
+    io:format("get_acquired_locks(~p,~p,~p)~n", [LockValues, MyDcId, AllDcs]),
+    [{L, K} || {L, LV} <- maps:to_list(LockValues), (K = lock_level(LV, MyDcId, AllDcs)) /= none].
+
+
+-spec lock_level(antidote_lock_crdt:value(), dcid(), [dcid()]) -> antidote_locks:lock_kind() | none.
+lock_level(LockValue, MyDcId, AllDcIds) ->
+    case lists:all(fun(Dc) -> maps:get(Dc, LockValue, Dc) == MyDcId end, AllDcIds) of
+        true -> exclusive;
+        false ->
+            case maps:get(MyDcId, LockValue, MyDcId) == MyDcId of
+                true -> shared;
+                false -> none
+            end
+    end.
+
+debug_log(Term) ->
+    io:format("DEBUG ~p~n", [Term]),
+    Log = case disk_log:open([{name, antidote_lock_server}]) of
+        {ok, L} -> L;
+        {repaired, L, _, _} -> L
+    end,
+    ok = disk_log:log(Log, {erlang:system_time(millisecond), Term}),
+    ok = disk_log:close(Log).
+
+debug_result({Actions, State}) ->
+    debug_log({actions, print_actions(Actions)}),
+    debug_log({state, print_state(State)}),
+    {Actions, State}.
+
+
+-spec other_dcs(state()) -> [dcid()].
+other_dcs(State) ->
+    State#state.all_dc_ids -- [State#state.dc_id].
+
+
+
 -ifdef(TEST).
 % run with: rebar3 eunit --module=antidote_lock_server_state
 
@@ -1641,39 +1681,3 @@ min_max_time_interrupt_test() ->
 -endif.
 -endif.
 
-
--spec get_acquired_locks(#{antidote_locks:lock() => antidote_lock_crdt:value()}, dcid(), [dcid()]) -> [antidote_locks:lock_spec_item()].
-get_acquired_locks(LockValues, MyDcId, AllDcs) ->
-    io:format("get_acquired_locks(~p,~p,~p)~n", [LockValues, MyDcId, AllDcs]),
-    [{L, K} || {L, LV} <- maps:to_list(LockValues), (K = lock_level(LV, MyDcId, AllDcs)) /= none].
-
-
--spec lock_level(antidote_lock_crdt:value(), dcid(), [dcid()]) -> antidote_locks:lock_kind() | none.
-lock_level(LockValue, MyDcId, AllDcIds) ->
-    case lists:all(fun(Dc) -> maps:get(Dc, LockValue, Dc) == MyDcId end, AllDcIds) of
-        true -> exclusive;
-        false ->
-            case maps:get(MyDcId, LockValue, MyDcId) == MyDcId of
-                true -> shared;
-                false -> none
-            end
-    end.
-
-debug_log(Term) ->
-    io:format("DEBUG ~p~n", [Term]),
-    Log = case disk_log:open([{name, antidote_lock_server}]) of
-        {ok, L} -> L;
-        {repaired, L, _, _} -> L
-    end,
-    ok = disk_log:log(Log, {erlang:system_time(millisecond), Term}),
-    ok = disk_log:close(Log).
-
-debug_result({Actions, State}) ->
-    debug_log({actions, print_actions(Actions)}),
-    debug_log({state, print_state(State)}),
-    {Actions, State}.
-
-
--spec other_dcs(state()) -> [dcid()].
-other_dcs(State) ->
-    State#state.all_dc_ids -- [State#state.dc_id].
