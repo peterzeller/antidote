@@ -37,7 +37,7 @@
 % the map stores lock-part to current owner
 -export_type([value/0]).
 
--export([get_lock_objects/1, get_lock_object/1, parse_lock_value/1, make_lock_updates/2, parse_lock_values/1]).
+-export([get_lock_objects/1, get_lock_object/1, parse_lock_value/1, make_lock_updates/2, parse_lock_values/1, get_lock_objects_from_spec/1]).
 
 -type value() :: #{dcid() => dcid()}.
 
@@ -47,13 +47,17 @@
 %%   keys: {DcId, antidote_crdt_register_mv}
 %%   values: DcId
 
--spec get_lock_objects(antidote_locks:lock_spec()) -> list(bound_object()).
+-spec get_lock_objects_from_spec(antidote_locks:lock_spec()) -> list(bound_object()).
+get_lock_objects_from_spec(Locks) ->
+    lists:map(fun({Lock, _Kind}) -> get_lock_object(Lock) end, Locks).
+
+-spec get_lock_objects([antidote_locks:lock()]) -> list(bound_object()).
 get_lock_objects(Locks) ->
-    [get_lock_object(Key) || {Key, _} <- Locks].
+    lists:map(fun get_lock_object/1, Locks).
 
 
 -spec get_lock_object(antidote_locks:lock()) -> bound_object().
-get_lock_object(Lock) ->
+get_lock_object(Lock) when is_binary(Lock) orelse is_atom(Lock) ->
     {Lock, antidote_crdt_map_rr, ?LOCK_BUCKET}.
 
 -spec parse_lock_value(antidote_crdt_map_rr:value()) -> value().

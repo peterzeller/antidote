@@ -34,7 +34,7 @@
 -endif.
 
 
--export([group_by_first/1, group_by/2, group_by/4, reduce/2]).
+-export([group_by_first/1, group_by/2, group_by/4, reduce/2, topsort/2]).
 
 
 %% groups a list of key-value pairs by key
@@ -66,10 +66,24 @@ reduce(_, [X]) -> X;
 reduce(M, [X, Y | Xs]) -> reduce(M, [M(X,Y) | Xs]).
 
 
+topsort(_Cmp, []) -> [];
+topsort(Cmp, Xs) ->
+    % Min are all elements X from Xs, such that for all elements Y from Xs: not Y < X
+    {Min, NotMin} = lists:partition(
+        fun(X) ->
+            lists:all(fun(Y) -> not Cmp(Y, X) end, Xs)
+        end,
+        Xs
+    ),
+    Min ++ topsort(Cmp, NotMin).
+
+
+
 
 -ifdef(TEST).
 group_by_first_test() ->
     M = group_by_first([{a, 1}, {b, 2}, {a, 3}, {a, 4}]),
     ?assertEqual(#{a => [1, 3, 4], b => [2]}, M).
+
 
 -endif.

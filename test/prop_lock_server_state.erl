@@ -2,8 +2,6 @@
 -include("antidote.hrl").
 -include_lib("proper/include/proper.hrl").
 
--export([command/1, initial_state/0, next_state/3,
-    precondition/2, postcondition/3]).
 
 -record(pid_state, {
     spec :: antidote_locks:lock_spec(),
@@ -22,8 +20,9 @@
 -record(state, {
     replica_states :: #{dcid() => #replica_state{}},
     time = 0 :: integer(),
-    future_actions = [] :: [{Time :: integer(), Action :: any()}],
-    max_pid = 0 :: integer()
+    future_actions = [] :: [{Time :: integer(), Dc :: dcid(), Action :: antidote_lock_server_state:action()}],
+    max_pid = 0 :: integer(),
+    crdt_effects = [] :: [{snapshot_time(), [{bound_object(), antidote_crdt:effect()}]}]
 }).
 
 prop_test() ->
@@ -75,7 +74,10 @@ my_commands() ->
                 proper_types:shrink_list(List),
                 satisfies_preconditions(S)))).
 
-satisfies_preconditions(Cmds) -> satisfies_preconditions(Cmds, initial_state()).
+satisfies_preconditions(Cmds) ->
+    Res = satisfies_preconditions(Cmds, initial_state()),
+    io:format("satisfies_preconditions -> ~p~n", [Res]),
+    Res.
 
 satisfies_preconditions([], _) -> true;
 satisfies_preconditions([Cmd | Cmds], State) ->
@@ -143,7 +145,7 @@ initial_state() ->
 
 initial_state(R) ->
     #replica_state{
-        lock_server_state = antidote_lock_server_state:initial(R, 10, 100, 5)
+        lock_server_state = antidote_lock_server_state:initial(R, replicas(), 10, 100, 5)
     }.
 
 command(State) ->
@@ -179,7 +181,7 @@ lock_spec() ->
         L,
         ?LET(T,
             tuple([lock_level() || _ <- lists:seq(1, N)]),
-            [{L, K} || {L, K} <- [{list_to_atom("lock" ++ integer_to_list(I)), element(I, T)}  || I <- lists:seq(1, N)], K /= none]),
+            [{L, K} || {L, K} <- [{list_to_atom("lock" ++ integer_to_list(I)), element(I, T)} || I <- lists:seq(1, N)], K /= none]),
         L /= []).
 
 %%lock() ->
@@ -192,10 +194,12 @@ lock_level() ->
 %% Picks whether a command should be valid under the current state.
 precondition(State, {tick, _R, _T}) ->
     Res = needs_action(State) == [],
-%%    io:format("precondition tick ~p: ~p~n State = ~p~n", [T, Res, print_state(State)]),
+    io:format("precondition tick -> ~p~n", [Res]),
     Res;
-precondition(State, {action, A}) ->
-    lists:member(A, State#state.future_actions);
+%%precondition(State, {action, A}) ->
+%%    Res = lists:member(A, State#state.future_actions),
+%%    io:format("precondition action -> ~p~n Action = ~p~n FutAct = ~p~n", [Res, A, State#state.future_actions]),
+%%    Res;
 precondition(#state{}, _Action) ->
     true.
 
@@ -235,8 +239,7 @@ invariant(State) ->
 next_state(State, _Res, {request, Pid, Replica, LockSpec}) ->
     Rs = maps:get(Replica, State#state.replica_states),
     Requester = {Pid, tag},
-    LockEntries = [{{L, K}, maps:get(L, Rs#replica_state.crdt_states, #{})} || {L, K} <- LockSpec],
-    {Actions, NewRs} = antidote_lock_server_state:new_request(Requester, State#state.time, Rs#replica_state.snapshot_time, replicas(), LockEntries, Rs#replica_state.lock_server_state),
+    {Actions, NewRs} = antidote_lock_server_state:new_request(Requester, State#state.time, Rs#replica_state.snapshot_time, LockSpec, Rs#replica_state.lock_server_state),
     State2 = State#state{
         replica_states = maps:put(Replica, Rs#replica_state{
             lock_server_state = NewRs,
@@ -262,100 +265,91 @@ next_state(State, _Res, {tick, Replica, DeltaTime}) ->
         }, State#state.replica_states)
     },
     add_actions(State2, Replica, Actions);
-next_state(State, _Res, {action, {T, Action}}) ->
-    State2 = State#state{
-        future_actions = State#state.future_actions -- [{T, Action}]
+next_state(State, _Res, {action, {T1, Dc1, Action1}}) ->
+    case pick_most_similar({T1, Dc1, Action1}, State#state.future_actions) of
+        error ->
+            State;
+        {ok, {T, Dc, Action}} ->
+            State2 = State#state{
+                future_actions = State#state.future_actions -- [{T, Dc, Action}]
+            },
+            io:format("run_action(~p)~n", [Action]),
+            run_action(State2, Dc, Action)
+    end.
+
+
+
+run_action(State, Dc, {read_crdt_state, SnapshotTime, Objects, Data}) ->
+    io:format("read_crdt_state ~p~n", [Objects]),
+    % TODO it is not necessary to read exactly from snapshottime
+    ReadSnapshot = SnapshotTime,
+    % collect all updates <= SnapshotTime
+    CrdtStates = calculate_crdt_states(ReadSnapshot, Objects, State),
+    io:format("CrdtStates = ~p~n", [CrdtStates]),
+    ReadResults = [antidote_crdt:value(Type, CrdtState) || {{_, Type, _}, CrdtState} <- CrdtStates],
+    ReplicaState = maps:get(Dc, State#state.replica_states),
+    LockServerState = ReplicaState#replica_state.lock_server_state,
+    {Actions, LockServerState2} = antidote_lock_server_state:on_read_crdt_state(State#state.time, Data, ReadSnapshot, ReadResults, LockServerState),
+    ReplicaState2 = ReplicaState#replica_state{
+        lock_server_state = LockServerState2
     },
-    run_action(State2, Action).
-
-run_action(State, {reply, Dc, {Pid, _Tag}}) ->
-    Rs = maps:get(Dc, State#state.replica_states),
-    State#state{
-        replica_states = maps:put(Dc, Rs#replica_state{
-            pid_states = maps:update_with(
-                Pid,
-                fun(PidState) ->
-%%                    io:format("Acquired ~p~n", [PidState#pid_state.spec]),
-                    PidState#pid_state{
-                        status = held
-                    }
-                end,
-                Rs#replica_state.pid_states
-            )
-        }, State#state.replica_states),
-        future_actions = [{State#state.time, {release, Dc, Pid}} | State#state.future_actions]
-    };
-run_action(State, {release, Dc, Pid}) ->
-    Rs = maps:get(Dc, State#state.replica_states),
-
-    {Actions, NewRs} = antidote_lock_server_state:remove_locks(State#state.time, Pid, Rs#replica_state.snapshot_time, Rs#replica_state.lock_server_state),
-
     State2 = State#state{
-        replica_states = maps:put(Dc, Rs#replica_state{
-            pid_states        = maps:remove(
-                Pid,
-                Rs#replica_state.pid_states
-            ),
-            lock_server_state = NewRs
-        }, State#state.replica_states)
+        replica_states = maps:put(Dc, ReplicaState2, State#state.replica_states)
+    },
+    io:format("read_crdt_state Actions = ~p~n", [Actions]),
+    add_actions(State2, Dc, Actions);
+run_action(State, Dc, {send_inter_dc_message, Receiver, Message}) ->
+    % deliver interdc message
+    ReplicaState = maps:get(Receiver, State#state.replica_states),
+    LockServerState = ReplicaState#replica_state.lock_server_state,
+    {Actions, LockServerState2} = antidote_lock_server_state:on_receive_inter_dc_message(State#state.time, Dc, Message, LockServerState),
+    ReplicaState2 = ReplicaState#replica_state{
+        lock_server_state = LockServerState2
+    },
+    State2 = State#state{
+        replica_states = maps:put(Dc, ReplicaState2, State#state.replica_states)
     },
     add_actions(State2, Dc, Actions);
-run_action(State, {lock_request, _From, To, LockRequestActionsForDc}) ->
-    Rs = maps:get(To, State#state.replica_states),
-    {Actions, NewRs} = antidote_lock_server_state:new_remote_request(State#state.time, LockRequestActionsForDc, Rs#replica_state.lock_server_state),
+run_action(State, Dc, {update_crdt_state, SnapshotTime, Updates, Data}) ->
+    % [{bound_object(), op_name(), op_param()}]
+    ReplicaState = maps:get(Dc, State#state.replica_states),
+    UpdateSnapshot = vectorclock:max([ReplicaState#replica_state.snapshot_time, SnapshotTime]),
+    CrdtStates = calculate_crdt_states(UpdateSnapshot, [O || {O, _, _} <- Updates], State),
+    Effects = lists:map(
+        fun({{Key, CrdtState}, {Key, Op, Args}}) ->
+            {_, Type, _} = Key,
+            {ok, Effect} = antidote_crdt:downstream(Type, {Op, Args}, CrdtState),
+            {Key, Effect}
+        end,
+        lists:zip(CrdtStates, Updates)
+    ),
+    NewUpdateSnapshot = vectorclock:set(Dc, vectorclock:get(Dc, UpdateSnapshot) + 1, UpdateSnapshot),
+    LockServerState = ReplicaState#replica_state.lock_server_state,
+    {Actions, NewLockServerState} = antidote_lock_server_state:on_complete_crdt_update(State#state.time, Data, NewUpdateSnapshot, LockServerState),
+
+    NewReplicaState = ReplicaState#replica_state{
+        snapshot_time     = NewUpdateSnapshot,
+        lock_server_state = NewLockServerState
+    },
     State2 = State#state{
-        replica_states = maps:put(To, Rs#replica_state{
-            lock_server_state = NewRs
-        }, State#state.replica_states)
-    },
-    State3 = add_actions(State2, To, Actions),
-    State3;
-run_action(State, {hand_over, From, To, Locks}) ->
-    Rs = maps:get(From, State#state.replica_states),
-
-    LockUpdates = [{Lock, make_lock_update(Level, From, To, maps:get(Lock, Rs#replica_state.crdt_states, #{}))} || {Lock, Level} <- Locks],
-
-    NewRs = Rs#replica_state{
-        crdt_states = apply_lock_updates(Rs#replica_state.crdt_states, LockUpdates)
-    },
-    State#state{
-        replica_states = maps:put(From, NewRs, State#state.replica_states),
-        future_actions = [{State#state.time, {hand_over2, NewRs#replica_state.snapshot_time, To, Locks, LockUpdates}} | State#state.future_actions]
-    };
-run_action(State, {hand_over2, SnapshotTime, To, LockSpec, LockUpdates}) ->
-    Rs = maps:get(To, State#state.replica_states),
-
-
-    Rs2 = Rs#replica_state{
-        crdt_states   = apply_lock_updates(Rs#replica_state.crdt_states, LockUpdates),
-        snapshot_time = vectorclock:max([Rs#replica_state.snapshot_time, SnapshotTime])
+        crdt_effects   = [{NewUpdateSnapshot, Effects} | State#state.crdt_effects],
+        replica_states = maps:put(Dc, NewReplicaState, State#state.replica_states)
     },
 
-%%
-%%    io:format("Old crdt_states at ~p = ~p~n", [To, Rs#replica_state.crdt_states]),
-%%    io:format("Updates         at ~p = ~p~n", [To, LockUpdates]),
-%%    io:format("New crdt_states at ~p = ~p~n", [To, Rs2#replica_state.crdt_states]),
+    add_actions(State2, Dc, Actions).
 
-    LockEntries = [{{L, K}, maps:get(L, Rs2#replica_state.crdt_states, #{})} || {L, K} <- LockSpec],
-
-    {Actions, NewRs} = antidote_lock_server_state:on_remote_locks_received(State#state.time, Rs2#replica_state.snapshot_time, replicas(), LockEntries, Rs2#replica_state.lock_server_state),
-    State2 = State#state{
-        replica_states = maps:put(To, Rs2#replica_state{
-            lock_server_state = NewRs
-        }, State#state.replica_states)
-    },
-    add_actions(State2, To, Actions);
-run_action(State, {ack, From, To, Locks}) ->
-    Rs = maps:get(To, State#state.replica_states),
-    {Actions, NewRs} = antidote_lock_server_state:ack_remote_requests(State#state.time,
-        [{From, L} || L <- Locks], Rs#replica_state.lock_server_state),
-
-    State2 = State#state{
-        replica_states = maps:put(To, Rs#replica_state{
-            lock_server_state = NewRs
-        }, State#state.replica_states)
-    },
-    add_actions(State2, To, Actions).
+calculate_crdt_states(ReadSnapshot, Objects, State) ->
+    Effects = lists:filter(fun({Clock, _}) -> vectorclock:le(Clock, ReadSnapshot) end, State#state.crdt_effects),
+    OrderedEffects = antidote_list_utils:topsort(fun({C1, _}, {C2, _}) -> vectorclock:lt(C1, C2) end, Effects),
+    CrdtStates = lists:map(fun(Key = {_, Type, _}) ->
+        Initial = antidote_crdt:new(Type),
+        CrdtState = lists:foldl(fun(Eff, Acc) ->
+            {ok, NewAcc} = antidote_crdt:update(Type, Eff, Acc),
+            NewAcc
+        end, Initial, [Eff || {_, Effs} <- OrderedEffects, {K, Eff} <- Effs, K == Key]),
+        {Key, CrdtState}
+    end, Objects),
+    CrdtStates.
 
 
 make_lock_update(exclusive, From, To, Crdt) ->
@@ -370,15 +364,10 @@ apply_lock_updates(CrdtStates, [{L, Upd} | Rest]) ->
     apply_lock_updates(CrdtStates2, Rest).
 
 add_actions(State, Dc, Actions) ->
-    {actions, HandOverActions, LockRequestActions, Replies, Acks} = Actions,
     T = State#state.time,
-    NewActions =
-        [{T, {hand_over, Dc, D, Locks}} || {D, Locks} <- maps:to_list(HandOverActions)]
-        ++ [{T, {lock_request, Dc, D, Locks}} || {D, Locks} <- maps:to_list(LockRequestActions)]
-        ++ [{T, {reply, Dc, R}} || R <- Replies]
-        ++ [{T, {ack, Dc, To, Acks}} || To <- replicas(), Acks /= []],
+    NewActions = [{T, Dc, A} || A <- Actions],
     State#state{
-        future_actions = NewActions ++ State#state.future_actions
+        future_actions = State#state.future_actions ++ NewActions
     }.
 
 %%-record(actions, {
@@ -411,9 +400,9 @@ find_reply(_, _, Time) when Time < 0 ->
     false;
 find_reply(_, [], _) ->
     true;
-find_reply(Pid, [{action, {_T, Action}} | Rest], Time) ->
+find_reply(Pid, [{action, {_T, _Dc, Action}} | Rest], Time) ->
     case Action of
-        {reply, _, {Pid, _}} ->
+        {accept_request, {Pid, _}} ->
             true;
         _ ->
             find_reply(Pid, Rest, Time)
@@ -427,3 +416,32 @@ find_reply(Pid, [Other | Rest], Time) ->
         Other -> throw({unhandled_case2, Other})
     end,
     find_reply(Pid, Rest, Time).
+
+
+pick_most_similar(_Elem, []) -> error;
+pick_most_similar(Elem, List) ->
+    WithSimilarity = [{similarity(Elem, X), X} || X <- List],
+    {_, Res} = lists:max(WithSimilarity),
+    {ok, Res}.
+
+
+similarity(X, X) -> 1;
+similarity(X, Y) when is_atom(X) andalso is_atom(Y) ->
+    0.1;
+similarity(X, Y) when is_list(X) andalso is_list(Y) ->
+    case {X, Y} of
+        {[], _} -> 0.1;
+        {_, []} -> 0.1;
+        {[A | As], [A | Bs]} ->
+            L = max(length(As), length(Bs)),
+            1 / (1 + L) + similarity(As, Bs) * L / (1 + L);
+        {[A | As], Xs} ->
+            L = max(1 + length(As), length(Xs)),
+            {ok, Sim} = pick_most_similar(A, Xs),
+            similarity(A, Sim) / L + similarity(As, Xs -- [Sim]) * (L - 1) / L
+    end;
+similarity(X, Y) when is_tuple(X) andalso is_tuple(Y) ->
+    0.5 + similarity(tuple_to_list(X), tuple_to_list(Y)) * 0.5;
+similarity(X, Y) when is_map(X) andalso is_map(Y) ->
+    0.5 + similarity(maps:to_list(X), maps:to_list(Y)) * 0.5;
+similarity(_, _) -> 0.

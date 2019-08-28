@@ -176,21 +176,14 @@
 }).
 
 -record(locks_transferred, {
-    locks :: antidote_locks:lock_spec(),
+    locks :: [{pid, antidote_locks:lock_spec_item()}],
     snapshot_time :: snapshot_time()
 }).
 
-
--record(lock_request_response, {
-    requester_pid :: pid(),
-    locks :: antidote_locks:lock_spec(),
-    snapshot_time :: snapshot_time()
+-record(locks_transferred_cont, {
+    locks :: [{pid, antidote_locks:lock_spec_item()}]
 }).
 
--record(lock_request_response_cont, {
-    requester_pid :: pid(),
-    locks :: antidote_locks:lock_spec()
-}).
 
 -record(handle_remote_requests_cont, {
     locks_to_transfer :: [#remote_request{}],
@@ -211,7 +204,7 @@
 }).
 
 
--opaque read_crdt_state_onresponse_data() :: #new_request_cont{} | #lock_request_response_cont{} | #handle_remote_requests_cont{}.
+-opaque read_crdt_state_onresponse_data() :: #new_request_cont{} | #locks_transferred_cont{} | #handle_remote_requests_cont{}.
 -opaque update_crdt_state_onresponse_data() :: #handle_remote_requests_cont2{}.
 -opaque inter_dc_message() :: #lock_request{} | #ack_locks{} | #locks_transferred{}.
 
@@ -249,7 +242,7 @@ my_dc_id(State) ->
 %% LockEntries: The requested locks
 -spec new_request(requester(), milliseconds(), snapshot_time(), antidote_locks:lock_spec(), state()) -> {actions(), state()}.
 new_request(Requester, RequestTime, SnapshotTime, LockSpec, State) ->
-    CrdtKeys = antidote_lock_crdt:get_lock_objects(LockSpec),
+    CrdtKeys = antidote_lock_crdt:get_lock_objects_from_spec(LockSpec),
     Actions = [
         #read_crdt_state{snapshot_time = SnapshotTime, objects = CrdtKeys,
             data                       = #new_request_cont{requester = Requester, request_time = RequestTime, snapshot_time = SnapshotTime, all_dcs = State#state.all_dc_ids, lock_spec = LockSpec}}
@@ -309,9 +302,9 @@ on_read_crdt_state(_CurrentTime, Cont = #new_request_cont{}, ReadTimestamp, Crdt
             } || {D, LR} <- RequestsByDc2] ++ Actions,
             {Actions2, State4}
     end);
-on_read_crdt_state(CurrentTime, Cont = #lock_request_response_cont{}, ReadClock, CrdtValues, State) ->
+on_read_crdt_state(CurrentTime, Cont = #locks_transferred_cont{}, ReadClock, CrdtValues, State) ->
     io:format("CrdtValues = ~p~n", [CrdtValues]),
-    LockEntries = lists:zip(Cont#lock_request_response_cont.locks, antidote_lock_crdt:parse_lock_values(CrdtValues)),
+    LockEntries = lists:zip(Cont#locks_transferred_cont.locks, antidote_lock_crdt:parse_lock_values(CrdtValues)),
     io:format("LockEntries = ~p~n", [LockEntries]),
     debug_log({event, on_remote_locks_received, #{
         current_time => CurrentTime,
@@ -333,6 +326,8 @@ on_read_crdt_state(CurrentTime, Cont = #lock_request_response_cont{}, ReadClock,
     debug_result({Actions1 ++ Actions2, State5});
 
 on_read_crdt_state(_CurrentTime, Cont = #handle_remote_requests_cont{}, ReadClock, CrdtValues, State) ->
+    io:format("on_read_crdt_state~n LocksToTransfer = ~p~n CrdtValues =~p~n", [
+        Cont#handle_remote_requests_cont.locks_to_transfer, antidote_lock_crdt:parse_lock_values(CrdtValues)]),
     ToTransferWithValue = lists:zip(Cont#handle_remote_requests_cont.locks_to_transfer, antidote_lock_crdt:parse_lock_values(CrdtValues)),
     MyDcId = my_dc_id(State),
 
@@ -347,7 +342,7 @@ on_read_crdt_state(_CurrentTime, Cont = #handle_remote_requests_cont{}, ReadCloc
                 [{D, R#remote_request.requester} || D <- State#state.all_dc_ids, maps:get(D, V, D) == MyDcId]
         end) /= []
     ],
-    Actions = {
+    Actions = [
         #update_crdt_state{
             snapshot_time = ReadClock,
             updates       = lists:flatmap(fun({_R, U}) -> U end, CrdtUpdates),
@@ -355,7 +350,7 @@ on_read_crdt_state(_CurrentTime, Cont = #handle_remote_requests_cont{}, ReadCloc
                 locks_transferred = [R || {R, _U} <- CrdtUpdates],
                 ref               = Cont#handle_remote_requests_cont.ref
             }}
-    },
+    ],
     {Actions, State}.
 
 -spec on_complete_crdt_update(milliseconds(), any(), snapshot_time(), state()) -> {actions(), state()}.
@@ -373,7 +368,7 @@ on_complete_crdt_update(_CurrentTime, Cont = #handle_remote_requests_cont2{}, Wr
         [] /= (Locks = lists:flatmap(fun(R) ->
             case R#remote_request.requester == Dc of
                 true ->
-                    [R#remote_request.lock_item];
+                    [{R#remote_request.pid, R#remote_request.lock_item}];
                 false ->
                     []
             end
@@ -397,15 +392,15 @@ on_receive_inter_dc_message(CurrentTime, SendingDc, #lock_request{locks = Locks,
         answered_remote_requests = ordsets:subtract(State#state.answered_remote_requests, NewRequests)
     },
     debug_result(next_actions(NewState, CurrentTime));
-on_receive_inter_dc_message(_CurrentTime, _SendingDc, #lock_request_response{snapshot_time = SnapshotTime, requester_pid = Pid, locks = Locks}, State) ->
+on_receive_inter_dc_message(_CurrentTime, _SendingDc, #locks_transferred{snapshot_time = SnapshotTime, locks = PLocks}, State) ->
+    Locks = [L || {_Pid, {L, _K}} <- PLocks],
     LockObjects = antidote_lock_crdt:get_lock_objects(Locks),
     Actions = [
         #read_crdt_state{
             snapshot_time = SnapshotTime,
             objects       = LockObjects,
-            data          = #lock_request_response_cont{
-                requester_pid = Pid,
-                locks         = Locks
+            data          = #locks_transferred_cont{
+                locks = PLocks
             }
         }
     ],
@@ -521,8 +516,8 @@ print_state(State) ->
         dc_id => State#state.dc_id,
         snapshot_time => print_vc(State#state.snapshot_time),
         by_pid => maps:map(fun(_K, V) -> print_pid_state(V) end, State#state.by_pid),
-        remote_requests => lists:map(fun({Pid, T, L}) ->
-            {Pid, print_systemtime(T), L} end, State#state.remote_requests),
+        remote_requests => lists:map(fun(#remote_request{request_time = T, pid = Pid, lock_item = L, requester = Dc}) ->
+            #{' remote_request' => Dc, pid =>  Pid, request_time => print_systemtime(T), lock_item => L} end, State#state.remote_requests),
         remote_requests_answered => State#state.answered_remote_requests,
         timer_Active => State#state.timer_Active,
         time_acquired => print_map_to_time(State#state.time_acquired),
@@ -856,17 +851,17 @@ handle_remote_requests(State, CurrentTime) ->
             State2#state.answered_remote_requests,
             ordsets:from_list(LocksToTransfer)
         ),
-        locks_in_transfer        = [{Ref, LockSpec} | State2#state.locks_in_transfer]
+        locks_in_transfer        = [{Ref, LockSpec} || LocksToTransfer /= []] ++ State2#state.locks_in_transfer
     },
     {Actions, State3}.
 
 exists_conflicting_remote_request(Dc, L, K, T, State) ->
-    lists:any(fun({{Dc2, L2}, {K2, T2}}) ->
+    lists:any(fun(#remote_request{lock_item = {L2, K2}, requester = Dc2, request_time = T2}) ->
         L == L2
             andalso Dc /= Dc2
             andalso not (K == shared andalso K2 == shared)
             andalso {T2, Dc2} =< {T, Dc}
-    end, maps:to_list(State#state.remote_requests)).
+    end, State#state.remote_requests).
 
 
 % checks if there is a conflicting local request for the given lock
@@ -1098,10 +1093,9 @@ new_test_request(Requester, RequestTime, SnapshotTime, LockSpecWithLockValues, S
 % 99, #{}, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc3}}], S1
 on_remote_locks_received(Time, RequesterPid, SendingDc, SnapshotTime, LockSpecWithLockValues, State) ->
     {LockSpec, LockValues} = lists:unzip(LockSpecWithLockValues),
-    {Actions1, State1} = on_receive_inter_dc_message(Time, SendingDc, #lock_request_response{
-        requester_pid = RequesterPid,
+    {Actions1, State1} = on_receive_inter_dc_message(Time, SendingDc, #locks_transferred{
         snapshot_time = SnapshotTime,
-        locks         = LockSpec
+        locks         = [{RequesterPid, L} || L <- LockSpec]
     }, State),
     [#read_crdt_state{data = Data}] = Actions1,
     on_read_crdt_state(Time, Data, SnapshotTime, unparse_lock_values(LockValues), State1).
