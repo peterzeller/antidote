@@ -227,11 +227,11 @@
 %% The initial state
 -spec initial(dcid(), [dcid()], milliseconds(), milliseconds(), milliseconds()) -> state().
 initial(MyDcId, AllDcs, MinExclusiveLockDuration, MaxLockHoldDuration, RemoteRequestDelay) -> #state{
-    dc_id = MyDcId,
-    all_dc_ids = AllDcs,
+    dc_id                       = MyDcId,
+    all_dc_ids                  = AllDcs,
     min_exclusive_lock_duration = MinExclusiveLockDuration,
-    max_lock_hold_duration = MaxLockHoldDuration,
-    remote_request_delay = RemoteRequestDelay
+    max_lock_hold_duration      = MaxLockHoldDuration,
+    remote_request_delay        = RemoteRequestDelay
 }.
 
 
@@ -252,7 +252,7 @@ new_request(Requester, RequestTime, SnapshotTime, LockSpec, State) ->
     CrdtKeys = antidote_lock_crdt:get_lock_objects(LockSpec),
     Actions = [
         #read_crdt_state{snapshot_time = SnapshotTime, objects = CrdtKeys,
-            data = #new_request_cont{requester = Requester, request_time = RequestTime, snapshot_time = SnapshotTime, all_dcs = State#state.all_dc_ids, lock_spec = LockSpec}}
+            data                       = #new_request_cont{requester = Requester, request_time = RequestTime, snapshot_time = SnapshotTime, all_dcs = State#state.all_dc_ids, lock_spec = LockSpec}}
     ],
     {Actions, State}.
 
@@ -305,7 +305,7 @@ on_read_crdt_state(_CurrentTime, Cont = #new_request_cont{}, ReadTimestamp, Crdt
 
             Actions2 = [#send_inter_dc_message{
                 receiver = D,
-                message = LR
+                message  = LR
             } || {D, LR} <- RequestsByDc2] ++ Actions,
             {Actions2, State4}
     end);
@@ -350,10 +350,10 @@ on_read_crdt_state(_CurrentTime, Cont = #handle_remote_requests_cont{}, ReadCloc
     Actions = {
         #update_crdt_state{
             snapshot_time = ReadClock,
-            updates = lists:flatmap(fun({_R, U}) -> U end, CrdtUpdates),
-            data = #handle_remote_requests_cont2{
+            updates       = lists:flatmap(fun({_R, U}) -> U end, CrdtUpdates),
+            data          = #handle_remote_requests_cont2{
                 locks_transferred = [R || {R, _U} <- CrdtUpdates],
-                ref = Cont#handle_remote_requests_cont.ref
+                ref               = Cont#handle_remote_requests_cont.ref
             }}
     },
     {Actions, State}.
@@ -365,9 +365,9 @@ on_complete_crdt_update(_CurrentTime, Cont = #handle_remote_requests_cont2{}, Wr
     % notify receivers of transferred locks
     Actions = [
         #send_inter_dc_message{receiver = Dc,
-            message = #locks_transferred{
+            message                     = #locks_transferred{
                 snapshot_time = WriteClock,
-                locks = ordsets:from_list(Locks)
+                locks         = ordsets:from_list(Locks)
             }}
         || Dc <- State#state.all_dc_ids,
         [] /= (Locks = lists:flatmap(fun(R) ->
@@ -393,7 +393,7 @@ on_complete_crdt_update(_CurrentTime, Cont = #handle_remote_requests_cont2{}, Wr
 on_receive_inter_dc_message(CurrentTime, SendingDc, #lock_request{locks = Locks, request_time = T, requester_pid = Pid}, State) ->
     NewRequests = ordsets:from_list([#remote_request{request_time = T, requester = SendingDc, pid = Pid, lock_item = LI} || LI <- Locks]),
     NewState = State#state{
-        remote_requests = ordsets:union(NewRequests, State#state.remote_requests),
+        remote_requests          = ordsets:union(NewRequests, State#state.remote_requests),
         answered_remote_requests = ordsets:subtract(State#state.answered_remote_requests, NewRequests)
     },
     debug_result(next_actions(NewState, CurrentTime));
@@ -402,10 +402,10 @@ on_receive_inter_dc_message(_CurrentTime, _SendingDc, #lock_request_response{sna
     Actions = [
         #read_crdt_state{
             snapshot_time = SnapshotTime,
-            objects = LockObjects,
-            data = #lock_request_response_cont{
+            objects       = LockObjects,
+            data          = #lock_request_response_cont{
                 requester_pid = Pid,
-                locks = Locks
+                locks         = Locks
             }
         }
     ],
@@ -438,9 +438,9 @@ remove_locks(CurrentTime, FromPid, CommitTime, State) ->
             {[], State};
         {ok, PidState} ->
             StateWithoutPid = State#state{
-                by_pid = maps:remove(FromPid, State#state.by_pid),
+                by_pid        = maps:remove(FromPid, State#state.by_pid),
                 snapshot_time = merge_snapshot_time(CommitTime, State#state.snapshot_time),
-                last_used = update_last_used(CurrentTime, PidState, State#state.last_used)
+                last_used     = update_last_used(CurrentTime, PidState, State#state.last_used)
             },
             next_actions(StateWithoutPid, CurrentTime)
     end).
@@ -624,9 +624,9 @@ add_process(Requester, RequestTime, Locks, State) ->
     {Pid, _} = Requester,
     State#state{
         by_pid = maps:put(Pid, #pid_state{
-            locks = [{Lock, {waiting, Kind}} || {Lock, Kind} <- Locks],
+            locks        = [{Lock, {waiting, Kind}} || {Lock, Kind} <- Locks],
             request_time = RequestTime,
-            requester = Requester
+            requester    = Requester
         }, State#state.by_pid)
     }.
 
@@ -843,9 +843,9 @@ handle_remote_requests(State, CurrentTime) ->
     Ref = make_ref(),
     Actions = [
         #read_crdt_state{snapshot_time = State#state.snapshot_time, objects = LockObjects
-            , data = #handle_remote_requests_cont{
+            , data                     = #handle_remote_requests_cont{
                 locks_to_transfer = LocksToTransfer,
-                ref = Ref
+                ref               = Ref
             }}
         || LocksToTransfer /= []
     ] ++ RequestAgainLocal,
@@ -856,7 +856,7 @@ handle_remote_requests(State, CurrentTime) ->
             State2#state.answered_remote_requests,
             ordsets:from_list(LocksToTransfer)
         ),
-        locks_in_transfer = [{Ref, LockSpec} | State2#state.locks_in_transfer]
+        locks_in_transfer        = [{Ref, LockSpec} | State2#state.locks_in_transfer]
     },
     {Actions, State3}.
 
@@ -1006,10 +1006,10 @@ max_lock_kind(Ls) ->
     lists:foldl(fun max_lock_kind/2, none, Ls).
 
 -spec max_lock_kind(shared | exclusive | none, shared | exclusive | none) -> shared | exclusive | none.
-max_lock_kind(A, none) -> A;
-max_lock_kind(none, A) -> A;
-max_lock_kind(exclusive, _) -> exclusive;
-max_lock_kind(_, exclusive) -> exclusive;
+max_lock_kind(A, none)        -> A;
+max_lock_kind(none, A)        -> A;
+max_lock_kind(exclusive, _)   -> exclusive;
+max_lock_kind(_, exclusive)   -> exclusive;
 max_lock_kind(shared, shared) -> shared.
 
 
@@ -1101,7 +1101,7 @@ on_remote_locks_received(Time, RequesterPid, SendingDc, SnapshotTime, LockSpecWi
     {Actions1, State1} = on_receive_inter_dc_message(Time, SendingDc, #lock_request_response{
         requester_pid = RequesterPid,
         snapshot_time = SnapshotTime,
-        locks = LockSpec
+        locks         = LockSpec
     }, State),
     [#read_crdt_state{data = Data}] = Actions1,
     on_read_crdt_state(Time, Data, SnapshotTime, unparse_lock_values(LockValues), State1).
@@ -1166,23 +1166,36 @@ shared_lock_missing_local_test() ->
     ok.
 
 
--ifdef(LATER).
+
 
 exclusive_lock_missing_local_test() ->
     SInit = initial(dc1),
     R1 = {p1, t1},
     % data centers 2 and 3 have the locks, so we need to request it
-    {Actions1, S1} = new_request(R1, 10, undefined, [dc1, dc2, dc3], [{{lock1, exclusive}, #{dc1 => dc3, dc2 => dc2, dc3 => dc2}}], SInit),
-    ?assertEqual(#actions{lock_request = #{dc2 => #{{dc1, lock1} => {exclusive, 11}}, dc3 => #{{dc1, lock1} => {exclusive, 11}}}}, Actions1),
+    {Actions1, S1} = new_test_request(R1, 10, undefined, [{{lock1, exclusive}, #{dc1 => dc3, dc2 => dc2, dc3 => dc2}}], SInit),
+    Msg = #lock_request{requester_pid = p1, request_time = 11, locks = [{lock1, exclusive}]},
+    ?assertEqual([
+        #send_inter_dc_message{receiver = dc2, message = Msg},
+        #send_inter_dc_message{receiver = dc3, message = Msg}
+    ], Actions1),
+%%    ?assertEqual(#actions{lock_request = #{dc2 => #{{dc1, lock1} => {exclusive, 11}}, dc3 => #{{dc1, lock1} => {exclusive, 11}}}}, Actions1),
 
     % later we receive the lock from dc2, which is not enough to acquire the lock
-    {Actions2, S2} = on_remote_locks_received(99, undefined, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc3, dc2 => dc1, dc3 => dc1}}], S1),
-    ?assertEqual(#actions{}, Actions2),
+    {Actions2, S2} = on_remote_locks_received(99, p1, dc2, #{}, [{{lock1, shared}, #{dc1 => dc3, dc2 => dc1, dc3 => dc1}}], S1),
+    ?assertEqual([], Actions2),
+%%    ?assertEqual(#actions{}, Actions2),
 
     % when we have all the locks, we can acquire the lock
-    {Actions3, _S3} = on_remote_locks_received(99, undefined, [dc1, dc2, dc3], [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], S2),
-    ?assertEqual(#actions{replies = [R1], ack_locks = [{lock1, exclusive}]}, Actions3),
+    {Actions3, _S3} = on_remote_locks_received(99, p1, dc3, #{}, [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], S2),
+    ?assertEqual([
+        #accept_request{requester = R1},
+        #send_inter_dc_message{receiver = dc2, message = #ack_locks{locks = [{lock1, exclusive}]}},
+        #send_inter_dc_message{receiver = dc3, message = #ack_locks{locks = [{lock1, exclusive}]}}
+    ], lists:sort(Actions3)),
+%%    ?assertEqual(#actions{replies = [R1], ack_locks = [{lock1, exclusive}]}, Actions3),
     ok.
+
+
 
 exclusive_lock_missing_local2_test() ->
     SInit = initial(dc1),
@@ -1192,26 +1205,35 @@ exclusive_lock_missing_local2_test() ->
         {{lock1, exclusive}, #{dc1 => dc3, dc2 => dc2, dc3 => dc2}},
         {{lock2, exclusive}, #{dc1 => dc3, dc2 => dc2, dc3 => dc2}}
     ],
-    {Actions1, S1} = new_request(R1, 10, undefined, [dc1, dc2, dc3], Locks, SInit),
-    ?assertEqual(#actions{lock_request = #{
-        dc2 => #{{dc1, lock1} => {exclusive, 11}, {dc1, lock2} => {exclusive, 11}},
-        dc3 => #{{dc1, lock1} => {exclusive, 11}, {dc1, lock2} => {exclusive, 11}}}}, Actions1),
+    {Actions1, S1} = new_test_request(R1, 10, undefined, Locks, SInit),
+    Msg = #lock_request{requester_pid = p1, request_time = 11, locks = [{lock1, exclusive}, {lock2, exclusive}]},
+    ?assertEqual([
+        #send_inter_dc_message{receiver = dc2, message = Msg},
+        #send_inter_dc_message{receiver = dc3, message = Msg}
+    ], Actions1),
     ?assertEqual([lock1, lock2], get_remote_waiting_locks(S1)),
 
     % first we only get lock 2
-    {Actions2, S2} = on_remote_locks_received(99, undefined, [dc1, dc2, dc3], [{{lock2, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], S1),
-    ?assertEqual(#actions{ack_locks = [{lock2, exclusive}]}, Actions2),
+    {Actions2, S2} = on_remote_locks_received(99, p1, dc2, undefined, [{{lock2, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], S1),
+    ?assertEqual([
+        #send_inter_dc_message{receiver = dc2, message = #ack_locks{locks = [{lock2, exclusive}]}},
+        #send_inter_dc_message{receiver = dc3, message = #ack_locks{locks = [{lock2, exclusive}]}}
+    ], Actions2),
     ?assertEqual([lock1], get_remote_waiting_locks(S2)),
 
     % when we have all the locks, we can acquire the lock
     ReceivedLocks = [
         {{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}},
         {{lock2, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}],
-    {Actions3, _S3} = on_remote_locks_received(99, undefined, [dc1, dc2, dc3], ReceivedLocks, S2),
-    ?assertEqual(#actions{replies = [R1], ack_locks = [{lock1, exclusive}, {lock2, exclusive}]}, Actions3),
+    {Actions3, _S3} = on_remote_locks_received(99, p1, dc3, undefined, ReceivedLocks, S2),
+    ?assertEqual([
+        #send_inter_dc_message{receiver = dc2, message = #ack_locks{locks = [{lock1, exclusive}, {lock2, exclusive}]}},
+        #send_inter_dc_message{receiver = dc3, message = #ack_locks{locks = [{lock1, exclusive}, {lock2, exclusive}]}},
+        #accept_request{requester = R1}
+    ], Actions3),
     ok.
 
-
+-ifdef(LATER).
 
 shared_locks_missing_local_test() ->
     SInit = initial(dc1),
@@ -1427,7 +1449,7 @@ same_time_remote_local2_test() ->
     % after timeout, DC1 should get the lock
     {Actions4, _S4} = timer_tick(S3, 99),
     ?assertEqual(#actions{
-        hand_over = #{dc1 => [{lock1, exclusive}]},
+        hand_over    = #{dc1 => [{lock1, exclusive}]},
         lock_request = #{dc1 =>
         #{{dc3, lock1} => {exclusive, 11}}}}, Actions4),
     ok.
@@ -1629,7 +1651,7 @@ min_max_time_test() ->
     R2 = {p2, t2},
     {Actions5, _S5} = new_request(R2, 215, undefined, [dc1, dc2, dc3], RLocks1, S4),
     ?assertEqual(#actions{
-        hand_over = #{dc2 => [{lock1, exclusive}]},
+        hand_over    = #{dc2 => [{lock1, exclusive}]},
         lock_request = #{dc2 => #{{dc1, lock1} => {exclusive, 215}}}
     }, Actions5),
 
@@ -1672,7 +1694,7 @@ min_max_time_interrupt_test() ->
     R2 = {p2, t2},
     {Actions5, _S5} = new_request(R2, 135, undefined, [dc1, dc2, dc3], RLocks1, S4),
     ?assertEqual(#actions{
-        hand_over = #{dc2 => [{lock1, exclusive}]},
+        hand_over    = #{dc2 => [{lock1, exclusive}]},
         lock_request = #{dc2 => #{{dc1, lock1} => {exclusive, 135}}}
     }, Actions5),
 
