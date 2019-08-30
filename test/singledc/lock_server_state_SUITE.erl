@@ -1,10 +1,15 @@
 -module(lock_server_state_SUITE).
 -include("antidote.hrl").
 
+% run with:
+% rebar3 ct --suite lock_server_state_SUITE --dir test/singledc
 
--export([all/0, explore/1]).
+-export([all/0, explore/1, suite/0, explore/0]).
 
 all() -> [explore].
+
+suite() ->
+    [{timetrap, {minutes, 5}}].
 
 -record(pid_state, {
     spec :: antidote_locks:lock_spec(),
@@ -28,8 +33,13 @@ all() -> [explore].
     cmds = [] :: [any()]
 }).
 
+
+explore() ->
+    [{timetrap, {minutes, 5}}].
+
+
 explore(_Config) ->
-    dorer:check(fun() ->
+    dorer:check(#{max_shrink_time => {60, second}}, fun() ->
         State = my_run_commands(initial_state()),
         dorer:log("Final State: ~n ~p", [print_state(State)]),
         check_liveness(lists:reverse(State#state.cmds))
@@ -72,13 +82,14 @@ my_command_name(_) ->
     other.
 
 my_run_commands(State) ->
-    case dorer:gen('command', dorer_generators:has_more()) of
+    case dorer:gen(command, dorer_generators:has_more()) of
         false -> State;
         true ->
-            Cmd = dorer:gen('command', command(State)),
+            Cmd = gen_command(State),
             dorer:log("Time ~p: RUN ~p", [State#state.time, Cmd]),
             NextState = next_state(State#state{cmds = [Cmd | State#state.cmds]}, Cmd),
-            dorer:log("Active requests: ~p", [maps:map(fun(Dc, RS) -> maps:keys(RS#replica_state.pid_states) end, NextState#state.replica_states)]),
+%%            dorer:log("Active requests: ~p", [maps:map(fun(Dc, RS) ->
+%%                maps:keys(RS#replica_state.pid_states) end, NextState#state.replica_states)]),
             check_invariant(NextState),
             my_run_commands(NextState)
     end.
@@ -89,7 +100,7 @@ my_run_commands(State) ->
 
 replicas() -> [r1, r2, r3].
 
-replica() -> dorer_generators:oneof(replicas()).
+replica() -> dorer_generators:no_shrink(dorer_generators:oneof(replicas())).
 
 %% Initial model value at system start. Should be deterministic.
 initial_state() ->
@@ -102,28 +113,36 @@ initial_state(R) ->
         lock_server_state = antidote_lock_server_state:initial(R, replicas(), 10, 100, 5)
     }.
 
-command(State) ->
+gen_command(State) ->
     NeedsTick = [R || R <- replicas(), RS <- [maps:get(R, State#state.replica_states)], RS#replica_state.time + 50 < State#state.time],
     NeedsActions = needs_action(State),
     if
         NeedsActions /= [] ->
-            dorer_generators:oneof(NeedsActions);
+            hd(NeedsActions);
+%%            dorer:gen([command, needs_action],
+%%                dorer_generators:oneof(NeedsActions));
         NeedsTick /= [] ->
-            dorer_generators:oneof([{tick, R, 0} || R <- NeedsTick]);
+            {tick, hd(NeedsTick), 0};
+%%            dorer:gen([command, needs_tick],
+%%                dorer_generators:no_shrink(dorer_generators:oneof([{tick, R, 0} || R <- NeedsTick])));
         true ->
-            dorer_generators:frequency_gen(
-                if
-                    State#state.time < 100 ->
-                        [{20, {request, State#state.max_pid + 1, replica(), lock_spec()}}];
-                    true ->
-                        []
-                end
-                ++ [{20, {tick, replica(), dorer_generators:range(1, 100)}}]
-                    ++ [{30, {action, A}} || A <- State#state.future_actions])
+            P1 = if
+                State#state.time < 100 -> 20;
+                true -> 0
+            end,
+            dorer:gen([command, normal],
+                dorer_generators:frequency_gen([
+                    {P1, {request, State#state.max_pid + 1, replica(), lock_spec()}},
+                    {20, {tick, replica(), dorer_generators:oneof([100, 50, 20, 10, 5, 1])}},
+                    {10 * length(State#state.future_actions), dorer_generators:oneof([{action, A} || A <- State#state.future_actions])}
+                ]))
     end.
 
 needs_action(State) ->
-    [{action, {T, A}} || {T, A} <- State#state.future_actions, T + 50 < State#state.time].
+    lists:map(fun(A) -> {action, A} end,
+        lists:filter(fun({T, _Dc, _A}) ->
+            T + 50 < State#state.time
+        end, State#state.future_actions)).
 
 
 
@@ -210,7 +229,9 @@ next_state(State, {action, {T1, Dc1, Action1}}) ->
                 future_actions = State#state.future_actions -- [{T, Dc, Action}]
             },
             run_action(State2, Dc, Action)
-    end.
+    end;
+next_state(_, Other) ->
+    throw({unhandled_next_state_action, Other}).
 
 
 
@@ -218,8 +239,6 @@ run_action(State, Dc, {read_crdt_state, SnapshotTime, Objects, Data}) ->
     % TODO it is not necessary to read exactly from snapshottime
     ReadSnapshot = SnapshotTime,
 
-    dorer:log("ReadSnapshot = ~p", [ReadSnapshot]),
-    dorer:log("crdt_effects = ~p", [State#state.crdt_effects]),
     % collect all updates <= SnapshotTime
     CrdtStates = calculate_crdt_states(ReadSnapshot, Objects, State),
     ReadResults = [antidote_crdt:value(Type, CrdtState) || {{_, Type, _}, CrdtState} <- CrdtStates],

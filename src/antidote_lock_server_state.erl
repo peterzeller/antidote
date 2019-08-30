@@ -95,6 +95,7 @@
     time_acquired = #{} :: #{antidote_locks:lock() => milliseconds()},
     % for each lock we have: the last time that we used it
     last_used = #{} :: #{antidote_locks:lock() => milliseconds()},
+    max_uid = 0 :: integer(),
     %%%%%%%%%%%%%%
     % configuration parameters:
     %%%%%%%%%%%%%%
@@ -328,7 +329,7 @@ on_read_crdt_state(_CurrentTime, Cont = #handle_remote_requests_cont{}, ReadCloc
     LockValues = maps:from_list(lists:zip(Locks, antidote_lock_crdt:parse_lock_values(CrdtValues))),
     MyDcId = my_dc_id(State),
 
-    io:format("LockValues = ~n ~p~n", [LockValues]),
+%%    io:format("LockValues = ~n ~p~n", [LockValues]),
 
 
     Transfers = lists:map(
@@ -692,9 +693,9 @@ set_lock_waiting_remote_list(LocksToChange, Locks, OldS, NewS) ->
 -spec update_waiting_remote([dcid()], #{antidote_locks:lock() => antidote_lock_crdt:value()}, state()) -> {actions(), state()}.
 update_waiting_remote(AllDcs, LockValues, State) ->
     MyDcId = my_dc_id(State),
-    io:format("LockValues = ~p~n", [LockValues]),
+%%    io:format("LockValues = ~p~n", [LockValues]),
     AcquiredLocks = get_acquired_locks(LockValues, MyDcId, AllDcs),
-    io:format("AcquiredLocks = ~p~n", [AcquiredLocks]),
+%%    io:format("AcquiredLocks = ~p~n", [AcquiredLocks]),
     State2 = State#state{
         by_pid = maps:map(fun(_Pid, S) ->
             S#pid_state{
@@ -863,7 +864,7 @@ handle_remote_requests(State, CurrentTime) ->
     % change local requests to waiting_remote
     {RequestAgainLocal, State2} = change_waiting_locks_to_remote(LockSpec, State),
 
-    Ref = make_ref(),
+    Ref = State2#state.max_uid + 1,
     Actions = [
         #read_crdt_state{snapshot_time = State#state.snapshot_time, objects = LockObjects
             , data = #handle_remote_requests_cont{
@@ -875,6 +876,7 @@ handle_remote_requests(State, CurrentTime) ->
 
 
     State3 = State2#state{
+        max_uid = Ref,
         answered_remote_requests = ordsets:union(
             State2#state.answered_remote_requests,
             ordsets:from_list(LocksToTransfer)
@@ -1277,7 +1279,7 @@ on_read_crdt_state_test() ->
             min_exclusive_lock_duration = 10,
             max_lock_hold_duration = 100,
             remote_request_delay = 5}),
-    io:format("Actions = ~p", [Actions]),
+%%    io:format("Actions = ~p", [Actions]),
     [#update_crdt_state{updates = Updates}] = Actions,
     Objects = [O || {O, _, _} <- Updates],
 
