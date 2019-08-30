@@ -176,12 +176,12 @@
 }).
 
 -record(locks_transferred, {
-    locks :: [{pid, antidote_locks:lock_spec_item()}],
+    locks :: [{pid(), antidote_locks:lock_spec_item()}],
     snapshot_time :: snapshot_time()
 }).
 
 -record(locks_transferred_cont, {
-    locks :: [{pid, antidote_locks:lock_spec_item()}]
+    locks :: [{pid(), antidote_locks:lock_spec_item()}]
 }).
 
 
@@ -311,7 +311,7 @@ on_read_crdt_state(CurrentTime, Cont = #locks_transferred_cont{}, ReadClock, Crd
         lock_entries => print_lock_entries(LockEntries)
     }}),
     debug_log({lock_entries, print_lock_entries(LockEntries)}),
-    LockStates = maps:from_list([{L, S} || {{L, _K}, S} <- LockEntries]),
+    LockStates = maps:from_list([{L, S} || {{_, {L, _K}}, S} <- LockEntries]),
     Locks = [L || {{L, _K}, _S} <- LockEntries],
     {Actions1, State2} = update_waiting_remote(State#state.all_dc_ids, LockStates, State),
     State3 = set_snapshot_time(ReadClock, State2),
@@ -323,26 +323,41 @@ on_read_crdt_state(CurrentTime, Cont = #locks_transferred_cont{}, ReadClock, Crd
     debug_result({Actions1 ++ Actions2, State5});
 
 on_read_crdt_state(_CurrentTime, Cont = #handle_remote_requests_cont{}, ReadClock, CrdtValues, State) ->
-    ToTransferWithValue = lists:zip(Cont#handle_remote_requests_cont.locks_to_transfer, antidote_lock_crdt:parse_lock_values(CrdtValues)),
+    RemoteRequests = Cont#handle_remote_requests_cont.locks_to_transfer,
+    Locks = lists:usort([L || #remote_request{lock_item = {L, _}} <- RemoteRequests]),
+    LockValues = maps:from_list(lists:zip(Locks, antidote_lock_crdt:parse_lock_values(CrdtValues))),
     MyDcId = my_dc_id(State),
 
-    CrdtUpdates = [
-        {R, antidote_lock_crdt:make_lock_updates(L, Updates)}
-        || {R, V} <- ToTransferWithValue,
-        {L, K} <- [R#remote_request.lock_item],
-        (Updates = case K of
-            shared ->
-                [{R#remote_request.requester, R#remote_request.requester} || maps:get(R#remote_request.requester, V, R#remote_request.requester) == MyDcId];
-            exclusive ->
-                [{D, R#remote_request.requester} || D <- State#state.all_dc_ids, maps:get(D, V, D) == MyDcId]
-        end) /= []
-    ],
+    io:format("LockValues = ~n ~p~n", [LockValues]),
+
+
+    Transfers = lists:map(
+        fun(L) ->
+            V = maps:get(L, LockValues),
+            LRequests = [R || R <- RemoteRequests, element(1, R#remote_request.lock_item) == L],
+            [Requester] = lists:usort([R#remote_request.requester || R <- LRequests]),
+            K = max_lock_kind([K || #remote_request{lock_item = {_, K}} <- LRequests]),
+            Updates = case K of
+                shared ->
+                    [{Requester, Requester} || maps:get(Requester, V, Requester) == MyDcId];
+                exclusive ->
+                    [{D, Requester} || D <- State#state.all_dc_ids, maps:get(D, V, D) == MyDcId]
+            end,
+            {L, Updates}
+        end, Locks),
+
+    LockUpdates = lists:flatmap(fun({L, Updates}) -> antidote_lock_crdt:make_lock_updates(L, Updates) end, Transfers),
+
+    Transferred = lists:filter(fun(#remote_request{lock_item = {L, _}}) ->
+        lists:any(fun({L2, _}) -> L == L2 end, Transfers)
+    end, RemoteRequests),
+
     Actions = [
         #update_crdt_state{
             snapshot_time = ReadClock,
-            updates = lists:flatmap(fun({_R, U}) -> U end, CrdtUpdates),
+            updates = LockUpdates,
             data = #handle_remote_requests_cont2{
-                locks_transferred = [R || {R, _U} <- CrdtUpdates],
+                locks_transferred = Transferred,
                 ref = Cont#handle_remote_requests_cont.ref
             }}
     ],
@@ -677,7 +692,9 @@ set_lock_waiting_remote_list(LocksToChange, Locks, OldS, NewS) ->
 -spec update_waiting_remote([dcid()], #{antidote_locks:lock() => antidote_lock_crdt:value()}, state()) -> {actions(), state()}.
 update_waiting_remote(AllDcs, LockValues, State) ->
     MyDcId = my_dc_id(State),
+    io:format("LockValues = ~p~n", [LockValues]),
     AcquiredLocks = get_acquired_locks(LockValues, MyDcId, AllDcs),
+    io:format("AcquiredLocks = ~p~n", [AcquiredLocks]),
     State2 = State#state{
         by_pid = maps:map(fun(_Pid, S) ->
             S#pid_state{
@@ -838,7 +855,7 @@ handle_remote_requests(State, CurrentTime) ->
             andalso not exists_conflicting_remote_request(Dc, L, K, T, State)
     end, State#state.remote_requests),
 
-    LockObjects = antidote_lock_crdt:get_lock_objects([L || #remote_request{lock_item = {L, _}} <- LocksToTransfer]),
+    LockObjects = lists:usort(antidote_lock_crdt:get_lock_objects([L || #remote_request{lock_item = {L, _}} <- LocksToTransfer])),
 
 
     LockSpec = ordsets:from_list(lists:map(fun(R) -> R#remote_request.lock_item end, LocksToTransfer)),
@@ -1234,6 +1251,37 @@ exclusive_lock_missing_local2_test() ->
         #send_inter_dc_message{receiver = dc3, message = #ack_locks{locks = [{lock1, exclusive}, {lock2, exclusive}]}},
         #accept_request{requester = R1}
     ], Actions3),
+    ok.
+
+
+on_read_crdt_state_test() ->
+    {Actions, _State} = on_read_crdt_state(24,
+        #handle_remote_requests_cont{
+            locks_to_transfer = [{remote_request, r1, 2, 5, {lock2, exclusive}},
+                {remote_request, r1, 4, 5, {lock1, exclusive}},
+                {remote_request, r1, 4, 5, {lock2, exclusive}}],
+            ref = make_ref()},
+        #{},
+        [[], []],
+        #state{
+            dc_id = r2,
+            all_dc_ids = [r1, r2, r3],
+            snapshot_time = #{},
+            by_pid = #{1 => {pid_state, [{lock2, {waiting_remote, exclusive}}, {lock3, {waiting, shared}}], 5, {1, tag}}},
+            remote_requests = [{remote_request, r1, 2, 5, {lock2, exclusive}}, {remote_request, r1, 4, 5, {lock1, exclusive}}, {remote_request, r1, 4, 5, {lock2, exclusive}}, {remote_request, r3, 3, 5, {lock3, exclusive}}],
+            answered_remote_requests = [{remote_request, r1, 2, 5, {lock2, exclusive}}, {remote_request, r1, 4, 5, {lock1, exclusive}}, {remote_request, r1, 4, 5, {lock2, exclusive}}],
+            locks_in_transfer = [{make_ref(), [{lock1, exclusive}, {lock2, exclusive}]}],
+            timer_Active = false,
+            time_acquired = #{},
+            last_used = #{},
+            min_exclusive_lock_duration = 10,
+            max_lock_hold_duration = 100,
+            remote_request_delay = 5}),
+    io:format("Actions = ~p", [Actions]),
+    [#update_crdt_state{updates = Updates}] = Actions,
+    Objects = [O || {O, _, _} <- Updates],
+
+    ?assertEqual([], Objects -- lists:usort(Objects)),
     ok.
 
 -ifdef(LATER).

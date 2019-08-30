@@ -38,7 +38,7 @@
 
 -export_type([lock/0, lock_spec/0]).
 
--opaque lock() :: binary().
+-opaque lock() :: binary() | atom().
 
 -type lock_kind() :: shared | exclusive.
 -type lock_spec_item() :: {lock(), lock_kind()}.

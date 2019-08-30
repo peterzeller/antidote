@@ -15,7 +15,6 @@ all() -> [explore].
 -record(replica_state, {
     lock_server_state :: antidote_lock_server_state:state(),
     pid_states = #{} :: #{pid() => #pid_state{}},
-    crdt_states = #{} :: #{antidote_locks:lock() => antidote_lock_crdt:value()},
     time = 0 :: integer(),
     snapshot_time = #{} :: snapshot_time()
 }).
@@ -32,6 +31,7 @@ all() -> [explore].
 explore(_Config) ->
     dorer:check(fun() ->
         State = my_run_commands(initial_state()),
+        dorer:log("Final State: ~n ~p", [print_state(State)]),
         check_liveness(lists:reverse(State#state.cmds))
     end).
 
@@ -42,11 +42,21 @@ print_state(State) ->
         future_actions => State#state.future_actions,
         replica_states => maps:map(
             fun(_K, V) ->
-                V#replica_state{
-                    lock_server_state = antidote_lock_server_state:print_state(V#replica_state.lock_server_state)
+                #{
+                    lock_server_state => antidote_lock_server_state:print_state(V#replica_state.lock_server_state),
+                    pid_states => V#replica_state.pid_states,
+                    time => V#replica_state.time,
+                    snapshot_time => V#replica_state.snapshot_time
                 }
             end,
-            State#state.replica_states)
+            State#state.replica_states),
+        crdt_states => maps:map(fun(_K, V) ->
+            Snapshot = V#replica_state.snapshot_time,
+            Objects = [O || {_S, Effs} <- State#state.crdt_effects, {O, Eff} <- Effs],
+            CrdtStates = calculate_crdt_states(Snapshot, Objects, State),
+            ReadResults = [{Key, antidote_crdt:value(Type, CrdtState)} || {{Key, Type, _}, CrdtState} <- CrdtStates],
+            maps:from_list(ReadResults)
+        end, State#state.replica_states)
     }.
 
 
@@ -62,11 +72,16 @@ my_command_name(_) ->
     other.
 
 my_run_commands(State) ->
-    Cmd = command(State),
-    dorer:log("Running Command ~p", [Cmd]),
-    NextState = next_state(State#state{cmds = [Cmd | State#state.cmds]}, Cmd),
-    check_invariant(NextState),
-    my_run_commands(NextState).
+    case dorer:gen('command', dorer_generators:has_more()) of
+        false -> State;
+        true ->
+            Cmd = dorer:gen('command', command(State)),
+            dorer:log("Time ~p: RUN ~p", [State#state.time, Cmd]),
+            NextState = next_state(State#state{cmds = [Cmd | State#state.cmds]}, Cmd),
+            dorer:log("Active requests: ~p", [maps:map(fun(Dc, RS) -> maps:keys(RS#replica_state.pid_states) end, NextState#state.replica_states)]),
+            check_invariant(NextState),
+            my_run_commands(NextState)
+    end.
 
 
 
@@ -116,24 +131,20 @@ needs_action(State) ->
 lock_spec() ->
     N = 3,
     Locks = [list_to_atom("lock" ++ integer_to_list(I)) || I <- lists:seq(1, N)],
-    dorer_generators:map(dorer_generators:oneof(Locks), lock_level()).
+    dorer_generators:transform(
+        dorer_generators:map(dorer_generators:oneof(Locks), lock_level()),
+        fun(M) ->
+            case maps:to_list(M) of
+                [] -> [{lock1, shared}];
+                L -> L
+            end
+        end).
 
 
 lock_level() ->
     dorer_generators:oneof([shared, exclusive]).
 
 
-%% Picks whether a command should be valid under the current state.
-precondition(State, {tick, _R, _T}) ->
-    needs_action(State) == [];
-precondition(#state{}, _Action) ->
-    true.
-
-%% Given the state `State' *prior* to the call `{call, Mod, Fun, Args}',
-%% determine whether the result `Res' (coming from the actual system)
-%% makes sense.
-postcondition(_State, _Action, _Res) ->
-    true.
 
 check_invariant(State) ->
     HeldLocks = lists:flatmap(
@@ -144,20 +155,19 @@ check_invariant(State) ->
                 {L, K} <- S#pid_state.spec]
         end,
         replicas()),
-    conjunction([
-        % if one process has an exclusive lock, no other has any lock:
-        {safety,
-            conjunction(
-                [{{exclusive_held, Id, L},
-                    lists:all(
-                        fun({Id2, {L2, _K2}}) ->
-                            Id2 == Id orelse L /= L2
-                        end,
-                        HeldLocks)}
-                    || {Id, {L, exclusive}} <- HeldLocks]
-            )
-        }
-    ]).
+    lists:foreach(fun
+        (Lock1 = {Id, {L, exclusive}}) ->
+            lists:foreach(fun(Lock2 = {Id2, {L2, _K2}}) ->
+                case Id2 /= Id andalso L == L2 of
+                    false -> ok;
+                    true ->
+                        throw({'Safety violation: Lock hold by two processes: ', Lock1, Lock2})
+                end
+
+            end, HeldLocks);
+        (_) ->
+            ok
+    end, HeldLocks).
 
 
 %% Assuming the postcondition for a call was true, update the model
@@ -207,6 +217,9 @@ next_state(State, {action, {T1, Dc1, Action1}}) ->
 run_action(State, Dc, {read_crdt_state, SnapshotTime, Objects, Data}) ->
     % TODO it is not necessary to read exactly from snapshottime
     ReadSnapshot = SnapshotTime,
+
+    dorer:log("ReadSnapshot = ~p", [ReadSnapshot]),
+    dorer:log("crdt_effects = ~p", [State#state.crdt_effects]),
     % collect all updates <= SnapshotTime
     CrdtStates = calculate_crdt_states(ReadSnapshot, Objects, State),
     ReadResults = [antidote_crdt:value(Type, CrdtState) || {{_, Type, _}, CrdtState} <- CrdtStates],
@@ -229,16 +242,23 @@ run_action(State, Dc, {send_inter_dc_message, Receiver, Message}) ->
         lock_server_state = LockServerState2
     },
     State2 = State#state{
-        replica_states = maps:put(Dc, ReplicaState2, State#state.replica_states)
+        replica_states = maps:put(Receiver, ReplicaState2, State#state.replica_states)
     },
     add_actions(State2, Dc, Actions);
 run_action(State, Dc, {update_crdt_state, SnapshotTime, Updates, Data}) ->
     % [{bound_object(), op_name(), op_param()}]
+    UpdatedObjects = [O || {O, _, _} <- Updates],
+    case lists:usort(UpdatedObjects) == lists:sort(UpdatedObjects) of
+        true -> ok;
+        false -> throw({'List of updates contains duplicates', UpdatedObjects, Updates})
+    end,
+
     ReplicaState = maps:get(Dc, State#state.replica_states),
     UpdateSnapshot = vectorclock:max([ReplicaState#replica_state.snapshot_time, SnapshotTime]),
-    CrdtStates = calculate_crdt_states(UpdateSnapshot, [O || {O, _, _} <- Updates], State),
+
+    CrdtStates = calculate_crdt_states(UpdateSnapshot, UpdatedObjects, State),
     Effects = lists:map(
-        fun({{Key, CrdtState}, {Key, Op, Args}}) ->
+        fun({{_Key, CrdtState}, {Key, Op, Args}}) ->
             {_, Type, _} = Key,
             {ok, Effect} = antidote_crdt:downstream(Type, {Op, Args}, CrdtState),
             {Key, Effect}
@@ -258,6 +278,40 @@ run_action(State, Dc, {update_crdt_state, SnapshotTime, Updates, Data}) ->
         replica_states = maps:put(Dc, NewReplicaState, State#state.replica_states)
     },
 
+    add_actions(State2, Dc, Actions);
+run_action(State, Dc, {accept_request, {Pid, _Tag}}) ->
+    ReplicaState = maps:get(Dc, State#state.replica_states),
+    PidState = maps:get(Pid, ReplicaState#replica_state.pid_states),
+    NewPidState = PidState#pid_state{
+        status = held
+    },
+    NewReplicaState = ReplicaState#replica_state{
+        pid_states = maps:put(Pid, NewPidState, ReplicaState#replica_state.pid_states)
+    },
+
+    State2 = State#state{
+        replica_states = maps:put(Dc, NewReplicaState, State#state.replica_states)
+    },
+    Actions = [
+        {release_locks, Pid}
+    ],
+    add_actions(State2, Dc, Actions);
+run_action(State, Dc, {release_locks, Pid}) ->
+    ReplicaState = maps:get(Dc, State#state.replica_states),
+
+    NewSnapshotTime = vectorclock:set(Dc, vectorclock:get(Dc, ReplicaState#replica_state.snapshot_time), ReplicaState#replica_state.snapshot_time),
+    {Actions, NewLockServerState} = antidote_lock_server_state:remove_locks(State#state.time, Pid, NewSnapshotTime, ReplicaState#replica_state.lock_server_state),
+
+
+    NewReplicaState2 = ReplicaState#replica_state{
+        lock_server_state = NewLockServerState,
+        pid_states = maps:remove(Pid, ReplicaState#replica_state.pid_states),
+        snapshot_time = NewSnapshotTime
+    },
+
+    State2 = State#state{
+        replica_states = maps:put(Dc, NewReplicaState2, State#state.replica_states)
+    },
     add_actions(State2, Dc, Actions).
 
 calculate_crdt_states(ReadSnapshot, Objects, State) ->
@@ -274,16 +328,16 @@ calculate_crdt_states(ReadSnapshot, Objects, State) ->
     CrdtStates.
 
 
-make_lock_update(exclusive, From, To, Crdt) ->
-    maps:from_list([{D, To} || D <- replicas(), maps:get(D, Crdt, D) == From]);
-make_lock_update(shared, From, To, Crdt) ->
-    maps:from_list([{D, To} || D <- [To], maps:get(D, Crdt, D) == From]).
-
-apply_lock_updates(CrdtStates, []) ->
-    CrdtStates;
-apply_lock_updates(CrdtStates, [{L, Upd} | Rest]) ->
-    CrdtStates2 = maps:update_with(L, fun(V) -> maps:merge(V, Upd) end, Upd, CrdtStates),
-    apply_lock_updates(CrdtStates2, Rest).
+%%make_lock_update(exclusive, From, To, Crdt) ->
+%%    maps:from_list([{D, To} || D <- replicas(), maps:get(D, Crdt, D) == From]);
+%%make_lock_update(shared, From, To, Crdt) ->
+%%    maps:from_list([{D, To} || D <- [To], maps:get(D, Crdt, D) == From]).
+%%
+%%apply_lock_updates(CrdtStates, []) ->
+%%    CrdtStates;
+%%apply_lock_updates(CrdtStates, [{L, Upd} | Rest]) ->
+%%    CrdtStates2 = maps:update_with(L, fun(V) -> maps:merge(V, Upd) end, Upd, CrdtStates),
+%%    apply_lock_updates(CrdtStates2, Rest).
 
 add_actions(State, Dc, Actions) ->
     T = State#state.time,
@@ -306,15 +360,16 @@ add_actions(State, Dc, Actions) ->
 %%}).
 
 
-check_liveness(Cmds) ->
-    % every request should have a reply within 500ms
-    check_liveness(Cmds).
 
 check_liveness([]) ->
     true;
-check_liveness([{request, Pid, _R, _Locks} | Rest]) ->
-    find_reply(Pid, Rest, 1000)
-        andalso check_liveness(Rest);
+check_liveness([Req = {request, Pid, _R, _Locks} | Rest]) ->
+    case find_reply(Pid, Rest, 1000) of
+        true -> ok;
+        false ->
+            throw({'liveness violation, no response for request ', Req})
+    end,
+    check_liveness(Rest);
 check_liveness([_ | Rest]) ->
     check_liveness(Rest).
 
