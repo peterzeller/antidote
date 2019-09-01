@@ -263,7 +263,7 @@ run_action(State, Dc, {send_inter_dc_message, Receiver, Message}) ->
     State2 = State#state{
         replica_states = maps:put(Receiver, ReplicaState2, State#state.replica_states)
     },
-    add_actions(State2, Dc, Actions);
+    add_actions(State2, Receiver, Actions);
 run_action(State, Dc, {update_crdt_state, SnapshotTime, Updates, Data}) ->
     % [{bound_object(), op_name(), op_param()}]
     UpdatedObjects = [O || {O, _, _} <- Updates],
