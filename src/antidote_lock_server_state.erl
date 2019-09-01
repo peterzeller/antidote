@@ -406,16 +406,20 @@ on_receive_inter_dc_message(CurrentTime, SendingDc, #lock_request{locks = Locks,
 on_receive_inter_dc_message(_CurrentTime, _SendingDc, #locks_transferred{snapshot_time = SnapshotTime, locks = PLocks}, State) ->
     Locks = [L || {_Pid, {L, _K}} <- PLocks],
     LockObjects = antidote_lock_crdt:get_lock_objects(Locks),
+    MergedSnapshotTime = vectorclock:max([SnapshotTime, State#state.snapshot_time]),
     Actions = [
         #read_crdt_state{
-            snapshot_time = SnapshotTime,
+            snapshot_time = MergedSnapshotTime,
             objects = LockObjects,
             data = #locks_transferred_cont{
                 locks = PLocks
             }
         }
     ],
-    {Actions, State};
+    NewState = State#state{
+        snapshot_time = MergedSnapshotTime
+    },
+    {Actions, NewState};
 on_receive_inter_dc_message(CurrentTime, SendingDc, #ack_locks{locks = Locks}, State) ->
     % remove all remote requests from SendingDc
     NewState = State#state{
