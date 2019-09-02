@@ -945,10 +945,10 @@ get_remote_waiting_locks(State) ->
 change_waiting_locks_to_remote(Locks, State) ->
     NewPyPid = maps:map(fun(_Pid, PidState) ->
         PidState#pid_state{
-            locks = [case LockState == waiting andalso lists:member(Lock, Locks) of
+            locks = [case LockState == waiting andalso lists:member(Lock, Locks) of % TODO type of Locks is not [Lock]
                 true -> {Lock, {waiting_remote, LockKind}};
                 false -> L
-            end || L = {Lock, {LockState, LockKind}} <- PidState#pid_state.locks]
+            end || L = {Lock, {LockState, LockKind}} <- PidState#pid_state.locks] % TODO seems wrong that LockKind is not used
         }
     end, State#state.by_pid),
     NewState = State#state{
