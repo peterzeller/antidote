@@ -37,11 +37,11 @@ suite() ->
 
 
 explore() ->
-    [{timetrap, {minutes, 5}}].
+    [{timetrap, {minutes, 15}}].
 
 
 explore(_Config) ->
-    dorer:check(#{max_shrink_time => {60, second}}, fun() ->
+    dorer:check(#{max_shrink_time => {300, second}}, fun() ->
         State = my_run_commands(initial_state()),
         log_commands(State),
         dorer:log("Final State: ~n ~p", [print_state(State)]),
@@ -274,6 +274,8 @@ run_action(State, Dc, {read_crdt_state, SnapshotTime, Objects, Data}) ->
     ReadResults = [antidote_crdt:value(Type, CrdtState) || {{_, Type, _}, CrdtState} <- CrdtStates],
 
     LockServerState = ReplicaState#replica_state.lock_server_state,
+    dorer:log("ReadSnapshot = ~p", [ReadSnapshot]),
+    dorer:log("ReadResults = ~p", [ReadResults]),
     {Actions, LockServerState2} = antidote_lock_server_state:on_read_crdt_state(State#state.time, Data, ReadSnapshot, ReadResults, LockServerState),
     ReplicaState2 = ReplicaState#replica_state{
         lock_server_state = LockServerState2,

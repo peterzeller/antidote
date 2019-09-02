@@ -330,14 +330,17 @@ on_read_crdt_state(_CurrentTime, Cont = #handle_remote_requests_cont{}, ReadCloc
         fun(L) ->
             V = maps:get(L, LockValues),
             LRequests = [R || R <- RemoteRequests, element(1, R#remote_request.lock_item) == L],
-            [Requester] = lists:usort([R#remote_request.requester || R <- LRequests]),
+            Requesters = lists:usort([R#remote_request.requester || R <- LRequests]),
             K = max_lock_kind([K || #remote_request{lock_item = {_, K}} <- LRequests]),
-            Updates = case K of
-                shared ->
-                    [{Requester, Requester} || maps:get(Requester, V, Requester) == MyDcId];
-                exclusive ->
-                    [{D, Requester} || D <- State#state.all_dc_ids, maps:get(D, V, D) == MyDcId]
-            end,
+            Updates =
+                lists:flatmap(fun(Requester) ->
+                    case K of
+                        shared ->
+                            [{Requester, Requester} || maps:get(Requester, V, Requester) == MyDcId];
+                        exclusive ->
+                            [{D, Requester} || D <- State#state.all_dc_ids, maps:get(D, V, D) == MyDcId]
+                    end
+                end, Requesters),
             {L, Updates}
         end, Locks),
 
