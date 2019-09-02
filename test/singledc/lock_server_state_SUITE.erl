@@ -41,7 +41,7 @@ explore() ->
 
 
 explore(_Config) ->
-    dorer:check(#{max_shrink_time => {300, second}}, fun() ->
+    dorer:check(#{max_shrink_time => {300, second}, n => 1000}, fun() ->
         State = my_run_commands(initial_state()),
         log_commands(State),
         dorer:log("Final State: ~n ~p", [print_state(State)]),
@@ -416,7 +416,7 @@ add_actions(State, Dc, Actions) ->
 check_liveness([]) ->
     true;
 check_liveness([Req = {request, Pid, _R, _Locks} | Rest]) ->
-    case find_reply(Pid, Rest, 1000) of
+    case find_reply(Pid, Rest, 2000) of
         true -> ok;
         false ->
             throw({'liveness violation, no response for request ', Req})
