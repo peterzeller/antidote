@@ -31,7 +31,7 @@
 
 -include("antidote.hrl").
 
--define(LOCK_BUCKET, <<"__antidote_lock_bucket">>).
+-define(LOCK_BUCKET, '__antidote_lock_bucket').
 
 % there is one lock-part per datacenter.
 % the map stores lock-part to current owner

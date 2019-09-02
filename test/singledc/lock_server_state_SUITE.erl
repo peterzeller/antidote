@@ -24,10 +24,12 @@ suite() ->
     snapshot_time = #{} :: snapshot_time()
 }).
 
+-type future_action() :: {Time :: integer(), Dc :: dcid(), Action :: antidote_lock_server_state:action()}.
+
 -record(state, {
     replica_states :: #{dcid() => #replica_state{}},
     time = 0 :: integer(),
-    future_actions = [] :: [{Time :: integer(), Dc :: dcid(), Action :: antidote_lock_server_state:action()}],
+    future_actions = [] :: [future_action()],
     max_pid = 0 :: integer(),
     crdt_effects = [] :: [{snapshot_time(), [{bound_object(), antidote_crdt:effect()}]}],
     cmds = [] :: [any()]
@@ -41,10 +43,15 @@ explore() ->
 explore(_Config) ->
     dorer:check(#{max_shrink_time => {60, second}}, fun() ->
         State = my_run_commands(initial_state()),
+        log_commands(State),
         dorer:log("Final State: ~n ~p", [print_state(State)]),
         check_liveness(lists:reverse(State#state.cmds))
     end).
 
+log_commands(State) ->
+    lists:foreach(fun(Cmd) ->
+        dorer:log("RUN ~w", [Cmd])
+    end, lists:reverse(State#state.cmds)).
 
 print_state(State) ->
     #{
@@ -86,8 +93,9 @@ my_run_commands(State) ->
         false -> State;
         true ->
             Cmd = gen_command(State),
-            dorer:log("Time ~p: RUN ~p", [State#state.time, Cmd]),
+            dorer:log("Time ~p: RUN ~w", [State#state.time, Cmd]),
             NextState = next_state(State#state{cmds = [Cmd | State#state.cmds]}, Cmd),
+            dorer:log("State:~n ~p", [print_state(NextState)]),
 %%            dorer:log("Active requests: ~p", [maps:map(fun(Dc, RS) ->
 %%                maps:keys(RS#replica_state.pid_states) end, NextState#state.replica_states)]),
             check_invariant(NextState),
@@ -130,20 +138,38 @@ gen_command(State) ->
                 State#state.time < 100 -> 20;
                 true -> 0
             end,
+            FutureActions = filter_future_actions(State#state.future_actions),
             dorer:gen([command, normal],
                 dorer_generators:frequency_gen([
                     {P1, {request, State#state.max_pid + 1, replica(), lock_spec()}},
                     {20, {tick, replica(), dorer_generators:oneof([100, 50, 20, 10, 5, 1])}},
-                    {10 * length(State#state.future_actions), dorer_generators:oneof([{action, A} || A <- State#state.future_actions])}
+                    {10 * length(FutureActions), dorer_generators:oneof([{action, A} || A <- FutureActions])}
                 ]))
     end.
 
 needs_action(State) ->
+    FutureActions = filter_future_actions(State#state.future_actions),
+
     lists:map(fun(A) -> {action, A} end,
         lists:filter(fun({T, _Dc, _A}) ->
             T + 50 < State#state.time
-        end, State#state.future_actions)).
+        end, FutureActions)).
 
+% only execute reads, if there is no update action planned for the same DC
+-spec filter_future_actions([future_action()]) -> [future_action()].
+filter_future_actions(Actions) ->
+    lists:filter(fun
+        ({_, Dc, {read_crdt_state, SnapshotTime, Objects, Data}}) ->
+            % check if there is no update scheduled on the same DC
+            not lists:any(fun
+                ({_, Dc2, {update_crdt_state, SnapshotTime2, Updates, Data2}}) ->
+                    Dc == Dc2;
+                (_) ->
+                    false
+            end, Actions);
+        (_) ->
+            true
+    end, Actions).
 
 
 
@@ -180,6 +206,8 @@ check_invariant(State) ->
                 case Id2 /= Id andalso L == L2 of
                     false -> ok;
                     true ->
+                        log_commands(State),
+                        dorer:log("Invariant violation in state:~n ~p", [print_state(State)]),
                         throw({'Safety violation: Lock hold by two processes: ', Lock1, Lock2})
                 end
 
@@ -236,17 +264,20 @@ next_state(_, Other) ->
 
 
 run_action(State, Dc, {read_crdt_state, SnapshotTime, Objects, Data}) ->
+    ReplicaState = maps:get(Dc, State#state.replica_states),
+
     % TODO it is not necessary to read exactly from snapshottime
-    ReadSnapshot = SnapshotTime,
+    ReadSnapshot = vectorclock:max([SnapshotTime, ReplicaState#replica_state.snapshot_time]),
 
     % collect all updates <= SnapshotTime
     CrdtStates = calculate_crdt_states(ReadSnapshot, Objects, State),
     ReadResults = [antidote_crdt:value(Type, CrdtState) || {{_, Type, _}, CrdtState} <- CrdtStates],
-    ReplicaState = maps:get(Dc, State#state.replica_states),
+
     LockServerState = ReplicaState#replica_state.lock_server_state,
     {Actions, LockServerState2} = antidote_lock_server_state:on_read_crdt_state(State#state.time, Data, ReadSnapshot, ReadResults, LockServerState),
     ReplicaState2 = ReplicaState#replica_state{
-        lock_server_state = LockServerState2
+        lock_server_state = LockServerState2,
+        snapshot_time = ReadSnapshot
     },
     State2 = State#state{
         replica_states = maps:put(Dc, ReplicaState2, State#state.replica_states)

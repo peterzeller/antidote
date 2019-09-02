@@ -86,16 +86,12 @@
     % remote requests that already have been fulfilled
     % (might be removed from here if additional permissions come in)
     answered_remote_requests = [] :: ordsets:ordset(#remote_request{}),
-    % locks currently being transferred to other datacenters
-    % TODO use locks_in_transfer on new request / in every read result
-    locks_in_transfer = [] :: [{reference(), antidote_locks:lock_spec()}],
     % is the retry timer is active or not?
     timer_Active = false :: boolean(),
     % for each exclusive lock we have: the time when we acquired it
     time_acquired = #{} :: #{antidote_locks:lock() => milliseconds()},
     % for each lock we have: the last time that we used it
     last_used = #{} :: #{antidote_locks:lock() => milliseconds()},
-    max_uid = 0 :: integer(),
     %%%%%%%%%%%%%%
     % configuration parameters:
     %%%%%%%%%%%%%%
@@ -187,13 +183,11 @@
 
 
 -record(handle_remote_requests_cont, {
-    locks_to_transfer :: [#remote_request{}],
-    ref :: reference()
+    locks_to_transfer :: [#remote_request{}]
 }).
 
 -record(handle_remote_requests_cont2, {
-    locks_transferred :: [#remote_request{}],
-    ref :: reference()
+    locks_transferred :: [#remote_request{}]
 }).
 
 -record(new_request_cont, {
@@ -358,8 +352,7 @@ on_read_crdt_state(_CurrentTime, Cont = #handle_remote_requests_cont{}, ReadCloc
             snapshot_time = ReadClock,
             updates = LockUpdates,
             data = #handle_remote_requests_cont2{
-                locks_transferred = Transferred,
-                ref = Cont#handle_remote_requests_cont.ref
+                locks_transferred = Transferred
             }}
     ],
     {Actions, State}.
@@ -388,8 +381,7 @@ on_complete_crdt_update(_CurrentTime, Cont = #handle_remote_requests_cont2{}, Wr
 
 
     State2 = State#state{
-        locks_in_transfer = lists:filter(fun({Ref, _Locks}) ->
-            Ref == Cont#handle_remote_requests_cont2.ref end, State#state.locks_in_transfer)
+        snapshot_time = vectorclock:max([State#state.snapshot_time, WriteClock])
     },
 
     {Actions, State2}.
@@ -638,9 +630,9 @@ is_lock_process(Pid, State) ->
 -spec remove_acked_requests(dcid(), antidote_locks:lock_spec(), [#remote_request{}]) -> [#remote_request{}].
 remove_acked_requests(SendingDc, Locks, LockRequests) ->
     lists:filter(fun(#remote_request{requester = RequesterDc, lock_item = {L, K}}) ->
-        RequesterDc == SendingDc
+        not (RequesterDc == SendingDc
             andalso (ordsets:is_element({L, K}, Locks)
-            orelse K == exclusive andalso ordsets:is_element({L, exclusive}, Locks))
+                orelse K == shared andalso ordsets:is_element({L, exclusive}, Locks)))
     end, LockRequests).
 
 %% Adds a new process to the state.
@@ -868,24 +860,20 @@ handle_remote_requests(State, CurrentTime) ->
     % change local requests to waiting_remote
     {RequestAgainLocal, State2} = change_waiting_locks_to_remote(LockSpec, State),
 
-    Ref = State2#state.max_uid + 1,
     Actions = [
         #read_crdt_state{snapshot_time = State#state.snapshot_time, objects = LockObjects
             , data = #handle_remote_requests_cont{
-                locks_to_transfer = LocksToTransfer,
-                ref = Ref
+                locks_to_transfer = LocksToTransfer
             }}
         || LocksToTransfer /= []
     ] ++ RequestAgainLocal,
 
 
     State3 = State2#state{
-        max_uid = Ref,
         answered_remote_requests = ordsets:union(
             State2#state.answered_remote_requests,
             ordsets:from_list(LocksToTransfer)
-        ),
-        locks_in_transfer = [{Ref, LockSpec} || LocksToTransfer /= []] ++ State2#state.locks_in_transfer
+        )
     },
     {Actions, State3}.
 
@@ -1265,8 +1253,7 @@ on_read_crdt_state_test() ->
         #handle_remote_requests_cont{
             locks_to_transfer = [{remote_request, r1, 2, 5, {lock2, exclusive}},
                 {remote_request, r1, 4, 5, {lock1, exclusive}},
-                {remote_request, r1, 4, 5, {lock2, exclusive}}],
-            ref = make_ref()},
+                {remote_request, r1, 4, 5, {lock2, exclusive}}]},
         #{},
         [[], []],
         #state{
@@ -1276,7 +1263,6 @@ on_read_crdt_state_test() ->
             by_pid = #{1 => {pid_state, [{lock2, {waiting_remote, exclusive}}, {lock3, {waiting, shared}}], 5, {1, tag}}},
             remote_requests = [{remote_request, r1, 2, 5, {lock2, exclusive}}, {remote_request, r1, 4, 5, {lock1, exclusive}}, {remote_request, r1, 4, 5, {lock2, exclusive}}, {remote_request, r3, 3, 5, {lock3, exclusive}}],
             answered_remote_requests = [{remote_request, r1, 2, 5, {lock2, exclusive}}, {remote_request, r1, 4, 5, {lock1, exclusive}}, {remote_request, r1, 4, 5, {lock2, exclusive}}],
-            locks_in_transfer = [{make_ref(), [{lock1, exclusive}, {lock2, exclusive}]}],
             timer_Active = false,
             time_acquired = #{},
             last_used = #{},
