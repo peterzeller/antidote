@@ -34,7 +34,7 @@
 -endif.
 
 
--export([group_by_first/1, group_by/2, group_by/4, reduce/2, topsort/2]).
+-export([group_by_first/1, group_by/2, group_by/4, reduce/2, topsort/2, find_first/2]).
 
 
 %% groups a list of key-value pairs by key
@@ -78,6 +78,13 @@ topsort(Cmp, Xs) ->
     Min ++ topsort(Cmp, NotMin).
 
 
+-spec find_first(fun((T) -> boolean()), [T]) -> error | {ok, T}.
+find_first(Pred, []) when is_function(Pred) -> error;
+find_first(Pred, [X|Xs]) ->
+    case Pred(X) of
+        true -> {ok, X};
+        false -> find_first(Pred, Xs)
+    end.
 
 
 -ifdef(TEST).
