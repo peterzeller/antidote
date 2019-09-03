@@ -318,9 +318,6 @@ on_read_crdt_state(CurrentTime, Cont = #locks_transferred_cont{}, ReadClock, Crd
         answered_remote_requests = ordsets:filter(fun(#remote_request{lock_item = {L, _}}) ->
             not lists:any(fun({{_Pid, {L2, _K2}}, _LV}) -> L == L2 end, LockEntries) end, State3#state.answered_remote_requests)
     },
-    io:format("State3:~n ~p~n", [print_state(State3)]),
-    io:format("State4:~n ~p~n", [print_state(State4)]),
-
 
     {Actions2, State5} = next_actions(State4, CurrentTime),
     debug_result({Actions1 ++ Actions2, State5});
@@ -554,7 +551,8 @@ print_state(State) ->
         remote_requests_answered => lists:map(fun print_remote_request/1, State#state.answered_remote_requests),
         timer_Active => State#state.timer_Active,
         time_acquired => print_map_to_time(State#state.time_acquired),
-        last_used => print_map_to_time(State#state.last_used)
+        last_used => print_map_to_time(State#state.last_used),
+        locks_in_transfer => State#state.locks_in_transfer
     }.
 
 print_remote_request(#remote_request{request_time = T, pid = Pid, lock_item = L, requester = Dc}) ->
@@ -681,7 +679,7 @@ has_conflict(LK, LKs) ->
     lists:any(fun(LK2) -> has_conflict1(LK, LK2) end, LKs).
 
 has_conflict1({L, K1}, {L, K2}) ->
-    K1 /= shared andalso K2 /= shared;
+    K1 == exclusive orelse K2 == exclusive;
 has_conflict1(_, _) ->
     false.
 
@@ -720,9 +718,7 @@ set_lock_waiting_remote_list(LocksToChange, Locks, OldS, NewS) ->
 -spec update_waiting_remote([dcid()], #{antidote_locks:lock() => antidote_lock_crdt:value()}, state()) -> {actions(), state()}.
 update_waiting_remote(AllDcs, LockValues, State) ->
     MyDcId = my_dc_id(State),
-%%    io:format("LockValues = ~p~n", [LockValues]),
     AcquiredLocks = get_acquired_locks(LockValues, MyDcId, AllDcs),
-%%    io:format("AcquiredLocks = ~p~n", [AcquiredLocks]),
     State2 = State#state{
         by_pid = maps:map(fun(_Pid, S) ->
             S#pid_state{
@@ -980,10 +976,8 @@ get_remote_waiting_locks(State) ->
 % Produces interdc request actions for the locks that are now waiting
 -spec change_waiting_locks_to_remote(antidote_locks:lock_spec(), state()) -> {actions(), state()}.
 change_waiting_locks_to_remote(Locks, State) ->
-    io:format("change_waiting_locks_to_remote~n Locks = ~p~n", [Locks]),
     NewPyPid = maps:map(fun(_Pid, PidState) ->
-        io:format("PidState = ~p~n", [print_pid_state(PidState)]),
-        R = PidState#pid_state{
+        PidState#pid_state{
             locks = [
                 case LockState == waiting
                     andalso (lists:member({Lock, exclusive}, Locks)
@@ -992,9 +986,7 @@ change_waiting_locks_to_remote(Locks, State) ->
                     true -> {Lock, {waiting_remote, LockKind}};
                     false -> L
                 end || L = {Lock, {LockState, LockKind}} <- PidState#pid_state.locks] % TODO seems wrong that LockKind is not used
-        },
-        io:format("PidState' = ~p~n", [print_pid_state(R)]),
-        R
+        }
     end, State#state.by_pid),
     NewState = State#state{
         by_pid = NewPyPid
@@ -1317,7 +1309,6 @@ on_read_crdt_state_test() ->
             min_exclusive_lock_duration = 10,
             max_lock_hold_duration = 100,
             remote_request_delay = 5}),
-%%    io:format("Actions = ~p", [Actions]),
     [#update_crdt_state{updates = Updates}] = Actions,
     Objects = [O || {O, _, _} <- Updates],
 
@@ -1347,9 +1338,49 @@ change_waiting_locks_to_remote_test() ->
     ?assertEqual([lock5], get_remote_waiting_locks(S1)),
 
     % receive remote request from dc2
-    {Actions2, S2} = on_receive_inter_dc_message(211, dc2, #lock_request{locks = [{lock1, shared}, {lock2, exclusive}, {lock3, shared}, {lock4, exclusive}], request_time = 0, requester_pid = p2}, S1),
+    {_Actions2, S2} = on_receive_inter_dc_message(211, dc2, #lock_request{locks = [{lock1, shared}, {lock2, exclusive}, {lock3, shared}, {lock4, exclusive}], request_time = 0, requester_pid = p2}, S1),
     % everything except for lock1 (Shared-shared) should be changed to waiting-remote
     ?assertEqual([lock2, lock3, lock4, lock5], get_remote_waiting_locks(S2)),
+
+
+    ok.
+
+has_conflict_test() ->
+    InTransfer = [{lock1, shared}, {lock2, exclusive}, {lock3, shared}, {lock4, exclusive}],
+    ?assertEqual(false, has_conflict({lock1, shared}, InTransfer)),
+    ?assertEqual(true, has_conflict({lock2, shared}, InTransfer)),
+    ?assertEqual(true, has_conflict({lock3, exclusive}, InTransfer)),
+    ?assertEqual(true, has_conflict({lock4, exclusive}, InTransfer)),
+    ?assertEqual(false, has_conflict({lock5, exclusive}, InTransfer)),
+    ok.
+
+request_lock_in_transfer_test() ->
+    SInit = initial(dc1),
+
+    % receive remote request from dc2
+    {_Actions1, S1} = on_receive_inter_dc_message(211, dc2, #lock_request{locks = [{lock1, shared}, {lock2, exclusive}, {lock3, shared}, {lock4, exclusive}], request_time = 0, requester_pid = p2}, SInit),
+
+
+    R1 = {p1, t1},
+
+    % assume we have all the locks except for lock5:
+    Locks = [
+        {{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}},
+        {{lock2, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}},
+        {{lock3, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}},
+        {{lock4, exclusive}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}},
+        {{lock5, exclusive}, #{dc1 => dc3, dc2 => dc3, dc3 => dc3}}
+    ],
+    {Actions2, S2} = new_test_request(R1, 210, #{}, Locks, S1),
+
+    % everything except for lock1 (Shared-shared) should be changed to waiting-remote
+    ?assertEqual([lock2, lock3, lock4, lock5], get_remote_waiting_locks(S2)),
+
+    Msg = #lock_request{requester_pid = p1, request_time = 211, locks = [{lock2,shared}, {lock3,exclusive}, {lock4,exclusive}, {lock5,exclusive}]},
+    ?assertEqual([
+        #send_inter_dc_message{receiver = dc2, message = Msg},
+        #send_inter_dc_message{receiver = dc3, message = Msg}
+    ], Actions2),
 
 
     ok.
@@ -1357,8 +1388,6 @@ change_waiting_locks_to_remote_test() ->
 
 remote_request_then_transfer_test() ->
     SInit = initial(dc1),
-
-    R1 = {p1, t1},
 
     % receive remote request from dc2
     {Actions1, S1} = on_receive_inter_dc_message(0, dc2, #lock_request{locks = [{lock1, exclusive}], request_time = 0, requester_pid = p2}, SInit),
