@@ -42,7 +42,8 @@ explore() ->
 
 explore(_Config) ->
     dorer:check(#{max_shrink_time => {3000, second}, n => 1000}, fun() ->
-        State = my_run_commands(initial_state()),
+        State1 = my_run_commands(initial_state()),
+        State = complete_run(State1),
         log_commands(State),
         dorer:log("Final State: ~n ~p", [print_state(State)]),
         check_liveness(lists:reverse(State#state.cmds))
@@ -89,7 +90,7 @@ my_command_name(_) ->
     other.
 
 my_run_commands(State) ->
-    case dorer:gen(command, dorer_generators:has_more()) of
+    case length(State#state.cmds) < 1000 andalso dorer:gen(command, dorer_generators:has_more()) of
         false -> State;
         true ->
             Cmd = gen_command(State),
@@ -102,8 +103,46 @@ my_run_commands(State) ->
             my_run_commands(NextState)
     end.
 
+complete_run(State) ->
+    complete_run(State, State#state.time).
 
+% completes the run by executing
+complete_run(State, LastAction) ->
+    case length(State#state.cmds) < 5000 of
+        true -> ok;
+        false ->
+            log_commands(State),
+            throw('complete_run: probably contains looping actions')
+    end,
+    case State#state.time < min(10000, LastAction + 500) of
+        false -> State;
+        true ->
+            Cmd = complete_run_next_command(State),
+            dorer:log("_Time ~p: RUN ~w", [State#state.time, Cmd]),
+            NextState = next_state(State#state{cmds = [Cmd | State#state.cmds]}, Cmd),
+            dorer:log("_State:~n ~p", [print_state(NextState)]),
+            check_invariant(NextState),
+            LastAction2 = case Cmd of
+                {tick, _, _} -> LastAction;
+                _ -> State#state.time
+            end,
+            complete_run(NextState, LastAction2)
+    end.
 
+complete_run_next_command(State) ->
+    NeedsTick = [R || R <- replicas(), RS <- [maps:get(R, State#state.replica_states)], RS#replica_state.time + 50 < State#state.time],
+    FutureActions = filter_future_actions(State#state.future_actions),
+    if
+    % execute actions as soon as possible
+        FutureActions /= [] ->
+            {action, hd(FutureActions)};
+    % execute ticks if necessary:
+        NeedsTick /= [] ->
+            {tick, hd(NeedsTick), 0};
+    % otherwise just let some time pass
+        true ->
+            {tick, hd(replicas()), 100}
+    end.
 
 
 replicas() -> [r1, r2, r3].
@@ -429,7 +468,7 @@ add_actions(State, Dc, Actions) ->
 check_liveness([]) ->
     true;
 check_liveness([Req = {request, Pid, _R, _Locks} | Rest]) ->
-    case find_reply(Pid, Rest, 2000) of
+    case find_reply(Pid, Rest, 1000000) of
         true -> ok;
         false ->
             throw({'liveness violation, no response for request ', Req})

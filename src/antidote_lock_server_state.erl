@@ -84,8 +84,9 @@
     % for each lock: remote data centers who want this lock
     remote_requests = [] :: [#remote_request{}],
     % remote requests that already have been fulfilled
+    % for every remote request, we store the snapshot time where the lock was last read
     % (might be removed from here if additional permissions come in)
-    answered_remote_requests = [] :: ordsets:ordset(#remote_request{}),
+    answered_remote_requests = [] :: orddict:orddict(#remote_request{}, snapshot_time()),
     % is the retry timer is active or not?
     timer_Active = false :: boolean(),
     % for each exclusive lock we have: the time when we acquired it
@@ -315,8 +316,10 @@ on_read_crdt_state(CurrentTime, Cont = #locks_transferred_cont{}, ReadClock, Crd
 
     % mark updated lock requests as unanswered, so they get checked again
     State4 = State3#state{
-        answered_remote_requests = ordsets:filter(fun(#remote_request{lock_item = {L, _}}) ->
-            not lists:any(fun({{_Pid, {L2, _K2}}, _LV}) -> L == L2 end, LockEntries) end, State3#state.answered_remote_requests)
+        answered_remote_requests = orddict:filter(fun(#remote_request{lock_item = {L, _}}, Vc) ->
+            not lists:any(fun({{_Pid, {L2, _K2}}, _LV}) -> L == L2 end, LockEntries)
+                orelse vectorclock:le(ReadClock, Vc)
+        end, State3#state.answered_remote_requests)
     },
 
     {Actions2, State5} = next_actions(State4, CurrentTime),
@@ -409,7 +412,7 @@ on_receive_inter_dc_message(CurrentTime, SendingDc, #lock_request{locks = Locks,
     NewRequests = ordsets:from_list([#remote_request{request_time = T, requester = SendingDc, pid = Pid, lock_item = LI} || LI <- Locks]),
     NewState = State#state{
         remote_requests = ordsets:union(NewRequests, State#state.remote_requests),
-        answered_remote_requests = ordsets:subtract(State#state.answered_remote_requests, NewRequests)
+        answered_remote_requests = antidote_list_utils:orddict_remove_keys(State#state.answered_remote_requests, NewRequests)
     },
     debug_result(next_actions(NewState, CurrentTime));
 on_receive_inter_dc_message(_CurrentTime, _SendingDc, #locks_transferred{snapshot_time = SnapshotTime, locks = PLocks}, State) ->
@@ -431,9 +434,11 @@ on_receive_inter_dc_message(_CurrentTime, _SendingDc, #locks_transferred{snapsho
     {Actions, NewState};
 on_receive_inter_dc_message(CurrentTime, SendingDc, #ack_locks{locks = Locks}, State) ->
     % remove all remote requests from SendingDc
+    NewRemoteRequests = remove_acked_requests(SendingDc, Locks, State#state.remote_requests),
     NewState = State#state{
-        remote_requests = remove_acked_requests(SendingDc, Locks, State#state.remote_requests),
-        answered_remote_requests = remove_acked_requests(SendingDc, Locks, State#state.answered_remote_requests)
+        remote_requests = NewRemoteRequests,
+        answered_remote_requests = orddict:filter(fun(K, _V) ->
+            ordsets:is_element(K, NewRemoteRequests) end, State#state.answered_remote_requests)
     },
     debug_result(next_actions(NewState, CurrentTime)).
 
@@ -548,7 +553,7 @@ print_state(State) ->
         snapshot_time => print_vc(State#state.snapshot_time),
         by_pid => maps:map(fun(_K, V) -> print_pid_state(V) end, State#state.by_pid),
         remote_requests => lists:map(fun print_remote_request/1, State#state.remote_requests),
-        remote_requests_answered => lists:map(fun print_remote_request/1, State#state.answered_remote_requests),
+        remote_requests_answered => lists:map(fun({K, V}) -> {print_remote_request(K), print_vc(V)} end, State#state.answered_remote_requests),
         timer_Active => State#state.timer_Active,
         time_acquired => print_map_to_time(State#state.time_acquired),
         last_used => print_map_to_time(State#state.last_used),
@@ -870,7 +875,7 @@ handle_remote_requests(State, CurrentTime) ->
                 % request must not be from the future
                 T =< CurrentTime
                 % request not already answered
-                    andalso not ordsets:is_element(Req, State#state.answered_remote_requests)
+                    andalso not orddict:is_key(Req, State#state.answered_remote_requests)
                     andalso
                     (
                         % last use is some time ago
@@ -904,9 +909,10 @@ handle_remote_requests(State, CurrentTime) ->
 
 
             State3 = State2#state{
-                answered_remote_requests = ordsets:union(
+                answered_remote_requests = orddict:merge(
+                    fun(K, V1, V2) -> vectorclock:max([V1, V2]) end,
                     State2#state.answered_remote_requests,
-                    ordsets:from_list(LocksToTransfer)
+                    orddict:from_list([{K, State#state.snapshot_time} || K <- LocksToTransfer])
                 ),
                 locks_in_transfer = LocksToTransferLSet
             },
@@ -1302,7 +1308,10 @@ on_read_crdt_state_test() ->
             snapshot_time = #{},
             by_pid = #{1 => {pid_state, [{lock2, {waiting_remote, exclusive}}, {lock3, {waiting, shared}}], 5, {1, tag}}},
             remote_requests = [{remote_request, r1, 2, 5, {lock2, exclusive}}, {remote_request, r1, 4, 5, {lock1, exclusive}}, {remote_request, r1, 4, 5, {lock2, exclusive}}, {remote_request, r3, 3, 5, {lock3, exclusive}}],
-            answered_remote_requests = [{remote_request, r1, 2, 5, {lock2, exclusive}}, {remote_request, r1, 4, 5, {lock1, exclusive}}, {remote_request, r1, 4, 5, {lock2, exclusive}}],
+            answered_remote_requests = [
+                {{remote_request, r1, 2, 5, {lock2, exclusive}}, #{}},
+                {{remote_request, r1, 4, 5, {lock1, exclusive}}, #{}},
+                {{remote_request, r1, 4, 5, {lock2, exclusive}}, #{}}],
             timer_Active = false,
             time_acquired = #{},
             last_used = #{},
@@ -1406,7 +1415,7 @@ remote_request_then_transfer_test() ->
     [#read_crdt_state{data = Data4}] = Actions4,
 
 
-    {Actions5, S5} = on_read_crdt_state(4, Data4, #{}, unparse_lock_values([#{dc1 => dc2, dc2 => dc2, dc3 => dc1}]), S4),
+    {Actions5, S5} = on_read_crdt_state(4, Data4, #{dc1 => 1}, unparse_lock_values([#{dc1 => dc2, dc2 => dc2, dc3 => dc1}]), S4),
     [#read_crdt_state{data = Data5}] = Actions5,
 
     {Actions6, _S6} = on_read_crdt_state(5, Data5, #{}, unparse_lock_values([#{dc1 => dc2, dc2 => dc2, dc3 => dc1}]), S5),

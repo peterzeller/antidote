@@ -34,7 +34,7 @@
 -endif.
 
 
--export([group_by_first/1, group_by/2, group_by/4, reduce/2, topsort/2, find_first/2]).
+-export([group_by_first/1, group_by/2, group_by/4, reduce/2, topsort/2, find_first/2, orddict_remove_keys/2]).
 
 
 %% groups a list of key-value pairs by key
@@ -86,6 +86,8 @@ find_first(Pred, [X|Xs]) ->
         false -> find_first(Pred, Xs)
     end.
 
+orddict_remove_keys(Dict, Keys) ->
+    lists:foldl(fun(K, Acc) -> orddict:erase(K, Acc) end, Dict, Keys).
 
 -ifdef(TEST).
 group_by_first_test() ->
