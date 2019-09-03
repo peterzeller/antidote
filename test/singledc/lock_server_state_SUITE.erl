@@ -208,7 +208,7 @@ check_invariant(State) ->
                     true ->
                         log_commands(State),
                         dorer:log("Invariant violation in state:~n ~p", [print_state(State)]),
-                        throw({'Safety violation: Lock hold by two processes: ', Lock1, Lock2})
+                        throw({'Safety violation: Lock held by two processes: ', Lock1, Lock2})
                 end
 
             end, HeldLocks);
