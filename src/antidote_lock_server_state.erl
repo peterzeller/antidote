@@ -1376,7 +1376,7 @@ request_lock_in_transfer_test() ->
     % everything except for lock1 (Shared-shared) should be changed to waiting-remote
     ?assertEqual([lock2, lock3, lock4, lock5], get_remote_waiting_locks(S2)),
 
-    Msg = #lock_request{requester_pid = p1, request_time = 211, locks = [{lock2,shared}, {lock3,exclusive}, {lock4,exclusive}, {lock5,exclusive}]},
+    Msg = #lock_request{requester_pid = p1, request_time = 211, locks = [{lock2, shared}, {lock3, exclusive}, {lock4, exclusive}, {lock5, exclusive}]},
     ?assertEqual([
         #send_inter_dc_message{receiver = dc2, message = Msg},
         #send_inter_dc_message{receiver = dc3, message = Msg}
