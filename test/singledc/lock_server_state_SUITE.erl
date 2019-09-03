@@ -9,7 +9,7 @@
 all() -> [explore].
 
 suite() ->
-    [{timetrap, {minutes, 5}}].
+    [{timetrap, {minutes, 150}}].
 
 -record(pid_state, {
     spec :: antidote_locks:lock_spec(),
@@ -37,11 +37,11 @@ suite() ->
 
 
 explore() ->
-    [{timetrap, {minutes, 15}}].
+    [{timetrap, {minutes, 150}}].
 
 
 explore(_Config) ->
-    dorer:check(#{max_shrink_time => {300, second}, n => 1000}, fun() ->
+    dorer:check(#{max_shrink_time => {3000, second}, n => 1000}, fun() ->
         State = my_run_commands(initial_state()),
         log_commands(State),
         dorer:log("Final State: ~n ~p", [print_state(State)]),
@@ -157,19 +157,32 @@ needs_action(State) ->
 
 % only execute reads, if there is no update action planned for the same DC
 -spec filter_future_actions([future_action()]) -> [future_action()].
-filter_future_actions(Actions) ->
-    lists:filter(fun
-        ({_, Dc, {read_crdt_state, SnapshotTime, Objects, Data}}) ->
-            % check if there is no update scheduled on the same DC
-            not lists:any(fun
-                ({_, Dc2, {update_crdt_state, SnapshotTime2, Updates, Data2}}) ->
-                    Dc == Dc2;
-                (_) ->
-                    false
-            end, Actions);
-        (_) ->
-            true
-    end, Actions).
+filter_future_actions(Actions1) ->
+    UpdatesBeforeReads = fun(Actions) ->
+        lists:filter(fun
+            ({_, Dc, {read_crdt_state, SnapshotTime, Objects, Data}}) ->
+                % check if there is no update scheduled on the same DC
+                not lists:any(fun
+                    ({_, Dc2, {update_crdt_state, SnapshotTime2, Updates, Data2}}) ->
+                        Dc == Dc2;
+                    (_) ->
+                        false
+                end, Actions);
+            (_) ->
+                true
+        end, Actions)
+    end,
+    InterDCFifo = fun
+        InterDCFifo([]) -> [];
+        InterDCFifo([A = {_, Sender, {send_inter_dc_message, Receiver, _}} | Rest]) ->
+            [A | InterDCFifo(lists:filter(fun
+                ({_, Sender2, {send_inter_dc_message, Receiver2, _}}) -> Sender /= Sender2 orelse Receiver /= Receiver2;
+                (_) -> true
+            end, Rest))]
+        ;
+        InterDCFifo([A | As]) -> [A | InterDCFifo(As)]
+    end,
+    UpdatesBeforeReads(InterDCFifo(Actions1)).
 
 
 
