@@ -78,12 +78,12 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-%%    simple_transaction_tests_with_locks,
+    simple_transaction_tests_with_locks
 %%    locks_in_sequence_check,
 %%    lock_acquisition_test,
 %%    get_lock_owned_by_other_dc_2,
 %%    multi_value_register_test,
-    asynchronous_test_1 % fail
+%%    asynchronous_test_1 % fail
 %%    asynchronous_test_2, % fail
 %%    asynchronous_test_3, % fail
 %%    asynchronous_test_4, % fail

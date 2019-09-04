@@ -558,8 +558,8 @@ print_action(#update_crdt_state{snapshot_time = S, updates = U, data = D}) ->
     #{action => update_crdt_state, snapshot_time => print_vc(S), updates => U, data => D};
 print_action(#send_inter_dc_message{message = M, receiver = R}) ->
     #{action => send_inter_dc_message, message => M, receiver => print_dc(R)};
-print_action(#accept_request{requester = R}) ->
-    #{action => accept_request, requester => R};
+print_action(#accept_request{requester = R, clock = Clock}) ->
+    #{action => accept_request, requester => R, clock => Clock};
 print_action(#abort_request{requester = R}) ->
     #{action => abort_request, requester => R};
 print_action(#set_timeout{timeout = T}) ->
@@ -745,7 +745,7 @@ handle_local_requests(State, CurrentTime) ->
 
 
     % acquire all locks from C
-    Actions = [#accept_request{requester = P#pid_state.requester} || P <- maps:values(C)],
+    Actions = [#accept_request{requester = P#pid_state.requester, clock = State#state.snapshot_time} || P <- maps:values(C)],
 
 
     CHeld = maps:map(fun(_Pid, PS) ->
@@ -1096,8 +1096,8 @@ on_remote_locks_received(Time, RequesterPid, SendingDc, SnapshotTime, LockSpecWi
 shared_lock_ok_test() ->
     S1 = initial(dc1),
     R1 = {p1, t1},
-    {Actions, _S2} = new_test_request(R1, 10, undefined, [{{lock1, shared}, #{dc1 => dc1, dc2 => dc2, dc3 => dc3}}], S1),
-    ?assertEqual([#accept_request{requester = R1}], Actions),
+    {Actions, _S2} = new_test_request(R1, 10, #{}, [{{lock1, shared}, #{dc1 => dc1, dc2 => dc2, dc3 => dc3}}], S1),
+    ?assertEqual([#accept_request{requester = R1, clock = #{}}], Actions),
     ok.
 
 
@@ -1143,7 +1143,7 @@ shared_lock_missing_local_test() ->
     % later we receive the lock from dc3 and we can get the lock
     {Actions2, _S2} = on_remote_locks_received(99, p1, dc3, #{}, [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc3}}], S1),
     ?assertEqual([
-        #accept_request{requester = R1},
+        #accept_request{requester = R1, clock = #{}},
         #send_inter_dc_message{receiver = dc2, message = #ack_locks{locks = [{lock1, shared}]}},
         #send_inter_dc_message{receiver = dc3, message = #ack_locks{locks = [{lock1, shared}]}}
     ], lists:sort(Actions2)),
@@ -1172,7 +1172,7 @@ exclusive_lock_missing_local_test() ->
     % when we have all the locks, we can acquire the lock
     {Actions3, _S3} = on_remote_locks_received(99, p1, dc3, #{}, [{{lock1, shared}, #{dc1 => dc1, dc2 => dc1, dc3 => dc1}}], S2),
     ?assertEqual([
-        #accept_request{requester = R1},
+        #accept_request{requester = R1, clock = #{}},
         #send_inter_dc_message{receiver = dc2, message = #ack_locks{locks = [{lock1, exclusive}]}},
         #send_inter_dc_message{receiver = dc3, message = #ack_locks{locks = [{lock1, exclusive}]}}
     ], lists:sort(Actions3)),
@@ -1213,7 +1213,7 @@ exclusive_lock_missing_local2_test() ->
     ?assertEqual([
         #send_inter_dc_message{receiver = dc2, message = #ack_locks{locks = [{lock1, exclusive}, {lock2, exclusive}]}},
         #send_inter_dc_message{receiver = dc3, message = #ack_locks{locks = [{lock1, exclusive}, {lock2, exclusive}]}},
-        #accept_request{requester = R1}
+        #accept_request{requester = R1, clock = #{}}
     ], Actions3),
     ok.
 

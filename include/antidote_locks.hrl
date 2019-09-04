@@ -44,7 +44,8 @@
 }).
 
 -record(accept_request, {
-    requester :: requester()
+    requester :: requester(),
+    clock :: snapshot_time()
 }).
 
 -record(abort_request, {

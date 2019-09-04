@@ -131,6 +131,11 @@
     cont :: any()
 }).
 
+-record(interdc_message, {
+    sender :: dcid(),
+    body :: antidote_lock_server_state:inter_dc_message()
+}).
+
 
 %%%===================================================================
 %%% API
@@ -282,6 +287,13 @@ handle_call2(#on_read_crdt_state{clock = Clock, cont = Cont, values = Values}, _
     S = State#state.s,
     CurrentTime = erlang:system_time(millisecond),
     {Actions, S2} = antidote_lock_server_state:on_read_crdt_state(CurrentTime, Cont, Clock, Values, S),
+    NewState = State#state{s = S2},
+    run_actions(Actions, NewState),
+    {reply, ok, NewState};
+handle_call2(#interdc_message{sender = Sender, body = Msg}, _From, State) ->
+    S = State#state.s,
+    CurrentTime = erlang:system_time(millisecond),
+    {Actions, S2} = antidote_lock_server_state:on_receive_inter_dc_message(CurrentTime, Sender, Msg, S),
     NewState = State#state{s = S2},
     run_actions(Actions, NewState),
     {reply, ok, NewState};
@@ -489,19 +501,21 @@ run_action(#update_crdt_state{updates = Updates, snapshot_time = Clock, data = C
 run_action(#send_inter_dc_message{receiver = Receiver, message = Message}, _State) ->
     % TODO should this be done async?
     send_interdc_lock_request(Receiver, Message, 3);
-run_action(#accept_request{requester = From}, _State) ->
-    gen_server:reply(From, ok);
+run_action(#accept_request{requester = From, clock = Clock}, _State) ->
+    gen_server:reply(From, {ok, Clock});
 run_action(#abort_request{requester = From}, _State) ->
     gen_server:reply(From, {error, no_locks});
 run_action(#set_timeout{}, _State) ->
     todo.
 
--spec send_interdc_lock_request(dcid(), any(), integer()) -> ok.
+
+-spec send_interdc_lock_request(dcid(), antidote_lock_server_state:inter_dc_message(), integer()) -> ok.
 send_interdc_lock_request(OtherDcID, ReqMsg, Retries) ->
     {LocalPartition, _} = log_utilities:get_key_partition(locks),
     PDCID = {OtherDcID, LocalPartition},
     logger:notice("send_interdc_lock_request to ~p:~n~p", [OtherDcID, ReqMsg]),
-    case inter_dc_query:perform_request(?LOCK_SERVER_REQUEST, PDCID, term_to_binary(ReqMsg), fun antidote_lock_server:on_interdc_reply/2) of
+    Msg = term_to_binary(#interdc_message{sender = dc_utilities:get_my_dc_id(), body = ReqMsg}),
+    case inter_dc_query:perform_request(?LOCK_SERVER_REQUEST, PDCID, Msg, fun antidote_lock_server:on_interdc_reply/2) of
         ok ->
 %%            logger:notice("send_interdc_lock_request ok, to ~p,~n~p", [OtherDcID, ReqMsg]),
             ok;

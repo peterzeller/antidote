@@ -286,7 +286,7 @@ init([From, ClientClock, Properties, StayAlive]) ->
     BaseState = init_state(StayAlive, false, false, Properties),
     case start_tx_internal(From, ClientClock, Properties, BaseState) of
         {ok, State} ->
-    {ok, execute_op, State};
+            {ok, execute_op, State};
         {error, Reason} ->
             {stop_and_reply, Reason, {reply, From, {error, Reason}}}
     end;

@@ -244,6 +244,7 @@ lock_level() ->
 
 
 check_invariant(State) ->
+    % TODO check should be stricter and also consider the versions assigned by the lock server
     HeldLocks = lists:flatmap(
         fun(R) ->
             [{{R, P}, {L, K}} ||
