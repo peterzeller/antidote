@@ -4,9 +4,12 @@
 % run with:
 % rebar3 ct --suite lock_server_state_SUITE --dir test/singledc
 
--export([all/0, explore/1, suite/0, explore/0]).
+-export([all/0, explore/1, suite/0, explore/0, many_requests/1]).
 
-all() -> [explore].
+all() -> [
+    explore,
+    many_requests
+].
 
 suite() ->
     [{timetrap, {minutes, 150}}].
@@ -48,6 +51,88 @@ explore(_Config) ->
         dorer:log("Final State: ~n ~p", [print_state(State)]),
         check_liveness(lists:reverse(State#state.cmds))
     end).
+
+many_requests(_Config) ->
+    N = 100,
+    State1 = initial_state(100, 500, 50),
+    InitialRequests = [{request, list_to_atom("pid_" ++ integer_to_list(P) ++ "_" ++ atom_to_list(R)), R, [{lock1, exclusive}]}
+        || P <- lists:seq(1, 1), R <- replicas()],
+    State2 = lists:foldl(fun(Cmd = {request, _Pid, R, _}, Acc) ->
+        io:format("Time ~p: RUN ~w~n", [Acc#state.time, Cmd]),
+        Acc2 = next_state(Acc, Cmd),
+        next_state(Acc2, {tick, R, 1})
+    end, State1, InitialRequests),
+
+
+    % should take less than 100ms per request on average
+    FinalState = run_many_requests(State2, N),
+    case FinalState#state.time / N < 100 of
+        true -> ok;
+        false -> throw({took_too_long, FinalState#state.time / N})
+    end.
+
+run_many_requests(State, N) ->
+    AcceptedRequests = length([ok || {action, {_, _, {accept_request, _, _}}} <- State#state.cmds]),
+    case AcceptedRequests > N of
+        true -> State;
+        false ->
+
+            case length(State#state.cmds) < 5000 of
+                true -> ok;
+                false ->
+                    log_commands(State),
+                    throw('run_many_requests: probably contains looping actions')
+            end,
+            NextCommands = begin
+                NeedsTick = [R || R <- replicas(), RS <- [maps:get(R, State#state.replica_states)], RS#replica_state.time + 50 < State#state.time],
+                FutureActions1 = filter_future_actions(State#state.future_actions),
+                % some actions need more time
+                FutureActions = lists:filter(fun
+                    ({T, _, {release_locks, _}}) ->
+                        % 50ms until locks are released:
+                        T + 50 < State#state.time;
+                    ({T, R, {read_crdt_state, SnapshotTime, Objects, Data}}) ->
+                        Delay = case vectorclock:le(SnapshotTime, (maps:get(R, State#state.replica_states))#replica_state.snapshot_time) of
+                            true -> 1;
+                            false ->
+                                % 100ms to read lock values when we need to wait for VC
+                                100
+                        end,
+                        T + Delay < State#state.time;
+                    ({T, _, _}) -> T + 1 < State#state.time;
+                    (_) -> true
+                end, FutureActions1),
+                if
+                    % execute actions as soon as possible
+                    FutureActions /= [] ->
+                        [{action, hd(FutureActions)}];
+                    % execute ticks if necessary:
+                    NeedsTick /= [] ->
+                        [{tick, R, 0} || R <- NeedsTick];
+                    % otherwise just let some time pass and request
+                    true ->
+                        [{tick, hd(replicas()), 5}]
+                end
+            end,
+
+            NextState = lists:foldl(fun(Cmd, Acc) ->
+                Acc2 = next_state_l(Acc, Cmd),
+                case Cmd of
+                    {action, {_, Dc, {release_locks, Pid}}} ->
+                        ct:pal("~p) release ~p at ~p", [Acc#state.time, AcceptedRequests, Dc]),
+                        % add another request when lock was just released:
+                        next_state_l(Acc2, {request, Pid, Dc, [{lock1, exclusive}]});
+                    _ ->
+                        Acc2
+
+                end
+            end, State, NextCommands),
+
+            run_many_requests(NextState, N)
+    end.
+
+
+
 
 log_commands(State) ->
     lists:foreach(fun(Cmd) ->
@@ -151,13 +236,16 @@ replica() -> dorer_generators:no_shrink(dorer_generators:oneof(replicas())).
 
 %% Initial model value at system start. Should be deterministic.
 initial_state() ->
+    initial_state(10, 100, 5).
+
+initial_state(MinExclusiveLockDuration, MaxLockHoldDuration, RemoteRequestDelay) ->
     #state{
-        replica_states = maps:from_list([{R, initial_state(R)} || R <- replicas()])
+        replica_states = maps:from_list([{R, initial_state_r(R, MinExclusiveLockDuration, MaxLockHoldDuration, RemoteRequestDelay)} || R <- replicas()])
     }.
 
-initial_state(R) ->
+initial_state_r(R, MinExclusiveLockDuration, MaxLockHoldDuration, RemoteRequestDelay) ->
     #replica_state{
-        lock_server_state = antidote_lock_server_state:initial(R, replicas(), 10, 100, 5)
+        lock_server_state = antidote_lock_server_state:initial(R, replicas(), MinExclusiveLockDuration, MaxLockHoldDuration, RemoteRequestDelay)
     }.
 
 gen_command(State) ->
@@ -269,6 +357,8 @@ check_invariant(State) ->
             ok
     end, HeldLocks).
 
+
+next_state_l(State, Cmd) -> next_state(State#state{cmds = [Cmd | State#state.cmds]}, Cmd).
 
 %% Assuming the postcondition for a call was true, update the model
 %% accordingly for the test to proceed.

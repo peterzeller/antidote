@@ -882,7 +882,11 @@ handle_remote_requests(State, CurrentTime) ->
                     State2#state.answered_remote_requests,
                     orddict:from_list([{K, State#state.snapshot_time} || K <- LocksToTransfer])
                 ),
-                locks_in_transfer = LocksToTransferLSet
+                locks_in_transfer = LocksToTransferLSet,
+                time_acquired = lists:foldl(
+                    fun({L, _K}, TA) -> maps:remove(L, TA) end,
+                    State2#state.time_acquired,
+                    LocksToTransferLSet)
             },
             {Actions, State3}
     end.
