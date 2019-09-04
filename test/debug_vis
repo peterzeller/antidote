@@ -42,12 +42,13 @@ main(Args) ->
 %%    io:format("Logs = ~p~n", [Logs]),
 
     Html = render_log(SortedLogs),
-    {ok, HF} = file:open(filename:join(BasePath, "vis.html"), [write]),
+    OutFile = filename:join(BasePath, "vis.html"),
+    {ok, HF} = file:open(OutFile, [write]),
     ok = file:write(HF, Html),
     ok = file:close(HF),
 
 
-    io:format("Done~n").
+    io:format("Done, see ~p~n", [OutFile]).
 
 
 -record(acc, {
@@ -73,6 +74,9 @@ render_log2([{Time, Node, What} | Rest], Accs) ->
         {event, Event, Data} ->
             render_cell(Accs, Time, Node, ["<p>Event ", render(Event), ":</p>", render(Data)])
             ++ render_log2(Rest, Accs);
+        {event, Event, FormatStr, Data} ->
+            render_cell(Accs, Time, Node, ["<p>Event ", render(Event), ":</p>", io_lib:format(FormatStr, Data)])
+                        ++ render_log2(Rest, Accs);
         {actions, []} ->
             render_log2(Rest, Accs);
         {actions, Actions} ->

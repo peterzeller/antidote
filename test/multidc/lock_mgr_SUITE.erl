@@ -78,12 +78,12 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-    simple_transaction_tests_with_locks
+%%    simple_transaction_tests_with_locks,
 %%    locks_in_sequence_check,
 %%    lock_acquisition_test,
 %%    get_lock_owned_by_other_dc_2,
 %%    multi_value_register_test,
-%%    asynchronous_test_1 % fail
+    asynchronous_test_1 % fail
 %%    asynchronous_test_2, % fail
 %%    asynchronous_test_3, % fail
 %%    asynchronous_test_4, % fail
@@ -594,7 +594,7 @@ generate_lock_helper(Amount,String,List) ->
     end.
 
 
-%% Starts a transactin that aquires a lock on one node. Then this node is killed and restarted.
+%% Starts a transaction that acquires a lock on one node. Then this node is killed and restarted.
 %% Then another transaction is started on another Node using the same lock.
 cluster_failure_test_1(Config) ->
     Nodes = proplists:get_value(nodes, Config),
@@ -619,9 +619,9 @@ cluster_failure_test_1(Config) ->
             {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2])
     end.
 %% TODO Does not work
-%% Starts a transactin that aquires a lock on one node3. Then node3 is killed.
-%% Then another transaction is started on Node2 trying to aquire the same lock.
-%% Then node3 is restarted and a transaction aquiring the lock on node2 is started again.
+%% Starts a transaction that acquires a lock on one node3. Then node3 is killed.
+%% Then another transaction is started on Node2 trying to acquire the same lock.
+%% Then node3 is restarted and a transaction acquiring the lock on node2 is started again.
 cluster_failure_test_2(Config) ->
     Nodes = proplists:get_value(nodes, Config),
     Node1 = hd(hd(Nodes)),
@@ -636,8 +636,8 @@ cluster_failure_test_2(Config) ->
             %% Kill a node
             ct:print("Killing node ~w", [Node3]),
             [Node3] = test_utils:brutal_kill_nodes([Node3]),
-            timer:sleep(10000), % since the brutal kill command is someties delayed ...
-            %% Test if the lock can be aquired by another dc
+            timer:sleep(10000), % since the brutal kill command is sometimes delayed ...
+            %% Test if the lock can be acquired by another dc
             % TODO This rpc:call will crash the lock_mgr and wont let it recover
             % (Assumption: The inter_dc communication does not handle this case and lock_mgr does
             % not have a build in error handling process for this case.)

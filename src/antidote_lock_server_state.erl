@@ -55,8 +55,7 @@
     on_read_crdt_state/5,
     on_receive_inter_dc_message/4,
     on_complete_crdt_update/4,
-    print_state/1, print_systemtime/1, print_vc/1, print_actions/1
-]).
+    print_state/1, print_systemtime/1, print_vc/1, print_actions/1, print_lock_entries/1]).
 
 
 % state invariants:
@@ -224,6 +223,12 @@ my_dc_id(State) ->
 %% LockEntries: The requested locks
 -spec new_request(requester(), milliseconds(), snapshot_time(), antidote_locks:lock_spec(), state()) -> {actions(), state()}.
 new_request(Requester, RequestTime, SnapshotTime, LockSpec, State) ->
+    debug_log({event, new_request, #{
+        requester => Requester,
+        request_time => print_systemtime(RequestTime),
+        snapshot_time => print_vc(SnapshotTime),
+        lock_spec => LockSpec
+    }}),
     CrdtKeys = antidote_lock_crdt:get_lock_objects_from_spec(LockSpec),
     Actions = [
         #read_crdt_state{snapshot_time = SnapshotTime, objects = CrdtKeys,
@@ -233,19 +238,18 @@ new_request(Requester, RequestTime, SnapshotTime, LockSpec, State) ->
 
 
 -spec on_read_crdt_state(milliseconds(), read_crdt_state_onresponse_data(), snapshot_time(), [any()], state()) -> {actions(), state()}.
-on_read_crdt_state(_CurrentTime, Cont = #new_request_cont{}, ReadTimestamp, CrdtValues, State) ->
+on_read_crdt_state(CurrentTime, Cont = #new_request_cont{}, ReadTimestamp, CrdtValues, State) ->
     LockEntries = lists:zip(Cont#new_request_cont.lock_spec, antidote_lock_crdt:parse_lock_values(CrdtValues)),
     Requester = Cont#new_request_cont.requester,
     RequestTime = Cont#new_request_cont.request_time,
     AllDcIds = Cont#new_request_cont.all_dcs,
-    debug_log({event, new_request, #{
+    debug_log({event, new_request_cont, #{
         requester => Requester,
         request_time => print_systemtime(RequestTime),
         snapshot_time => print_vc(ReadTimestamp),
         all_dc_ids => print_dcs(AllDcIds),
         lock_entries => print_lock_entries(LockEntries)
     }}),
-    debug_log({lock_entries, print_lock_entries(LockEntries)}),
     {RequesterPid, _} = Requester,
     MyDcId = my_dc_id(State),
     Locks = [L || {L, _} <- LockEntries],
@@ -256,12 +260,20 @@ on_read_crdt_state(_CurrentTime, Cont = #new_request_cont{}, ReadTimestamp, Crdt
         _ -> RequestTime + State#state.remote_request_delay
     end,
 
-    State1 = add_process(Requester, RequestTime2, Locks, State),
+    {Actions0, State0} = case maps:is_key(RequesterPid, State#state.by_pid) of
+        false -> {[], State};
+        true ->
+            debug_log({event, process_already_active, #{}}),
+            % only one request per process is possible, so cancel the old request
+            remove_locks(CurrentTime, RequesterPid, vectorclock:new(), State)
+    end,
+    State1 = add_process(Requester, RequestTime2, Locks, State0),
     State2 = set_snapshot_time(ReadTimestamp, State1),
     debug_result(case MissingLocks of
         [] ->
             % we have all locks locally
-            next_actions(State2, RequestTime);
+            {Actions3, State3} = next_actions(State2, RequestTime),
+            {Actions0 ++ Actions3, State3};
         _ ->
             % tell other data centers that we need locks
             % for shared locks, ask to get own lock back
@@ -281,18 +293,17 @@ on_read_crdt_state(_CurrentTime, Cont = #new_request_cont{}, ReadTimestamp, Crdt
             Actions2 = [#send_inter_dc_message{
                 receiver = D,
                 message = LR
-            } || {D, LR} <- RequestsByDc2] ++ Actions,
-            {Actions2, State4}
+            } || {D, LR} <- RequestsByDc2],
+            {Actions0 ++ Actions ++ Actions2, State4}
     end);
 on_read_crdt_state(CurrentTime, Cont = #locks_transferred_cont{}, ReadClock, CrdtValues, State) ->
     LockEntries = lists:zip(Cont#locks_transferred_cont.locks, antidote_lock_crdt:parse_lock_values(CrdtValues)),
-    debug_log({event, on_remote_locks_received, #{
+    debug_log({event, locks_transferred_cont, #{
         current_time => CurrentTime,
         read_clock => print_vc(ReadClock),
         all_dcs => print_dcs(State#state.all_dc_ids),
         lock_entries => print_lock_entries(LockEntries)
     }}),
-    debug_log({lock_entries, print_lock_entries(LockEntries)}),
     LockStates = maps:from_list([{L, S} || {{_, {L, _K}}, S} <- LockEntries]),
     {Actions1, State2} = update_waiting_remote(State#state.all_dc_ids, LockStates, State),
     State3 = set_snapshot_time(ReadClock, State2),
@@ -317,6 +328,12 @@ on_read_crdt_state(CurrentTime, Cont = #handle_remote_requests_cont{}, ReadClock
 handle_remote_requests_cont(CurrentTime, RemoteRequests, ParsedCrdtValues, ReadClock, State) ->
     Locks = lists:usort([L || #remote_request{lock_item = {L, _}} <- RemoteRequests]),
     LockValues = maps:from_list(lists:zip(Locks, ParsedCrdtValues)),
+    debug_log({event, handle_remote_requests_cont, #{
+        current_time => CurrentTime,
+        read_clock => print_vc(ReadClock),
+        remote_requests => RemoteRequests,
+        lock_values => LockValues
+    }}),
     MyDcId = my_dc_id(State),
     Transfers = lists:map(
         fun(L) ->
@@ -361,6 +378,12 @@ handle_remote_requests_cont(CurrentTime, RemoteRequests, ParsedCrdtValues, ReadC
 on_complete_crdt_update(CurrentTime, Cont = #handle_remote_requests_cont2{}, WriteClock, State) ->
     LocksTransferred = Cont#handle_remote_requests_cont2.locks_transferred,
 
+    debug_log({event, on_complete_crdt_update, #{
+        current_time => CurrentTime,
+        write_clock => print_vc(WriteClock),
+        locks_transferred => LocksTransferred
+    }}),
+
     % notify receivers of transferred locks
     Actions = [
         #send_inter_dc_message{receiver = Dc,
@@ -392,13 +415,27 @@ on_complete_crdt_update(CurrentTime, Cont = #handle_remote_requests_cont2{}, Wri
 
 -spec on_receive_inter_dc_message(milliseconds(), dcid(), inter_dc_message(), state()) -> {actions(), state()}.
 on_receive_inter_dc_message(CurrentTime, SendingDc, #lock_request{locks = Locks, request_time = T, requester_pid = Pid}, State) ->
+    debug_log({event, on_receive_inter_dc_message, #{
+        ' kind' => lock_request,
+        current_time => CurrentTime,
+        locks => Locks,
+        request_time => T,
+        sending_dc => SendingDc,
+        requester_pid => Pid
+    }}),
     NewRequests = ordsets:from_list([#remote_request{request_time = T, requester = SendingDc, pid = Pid, lock_item = LI} || LI <- Locks]),
     NewState = State#state{
         remote_requests = ordsets:union(NewRequests, State#state.remote_requests),
         answered_remote_requests = antidote_list_utils:orddict_remove_keys(State#state.answered_remote_requests, NewRequests)
     },
     debug_result(next_actions(NewState, CurrentTime));
-on_receive_inter_dc_message(_CurrentTime, _SendingDc, #locks_transferred{snapshot_time = SnapshotTime, locks = PLocks}, State) ->
+on_receive_inter_dc_message(_CurrentTime, SendingDc, #locks_transferred{snapshot_time = SnapshotTime, locks = PLocks}, State) ->
+    debug_log({event, locks_transferred, #{
+        ' kind' => lock_request,
+        snapshot_time => SnapshotTime,
+        sending_dc => SendingDc,
+        locks => PLocks
+    }}),
     Locks = [L || {_Pid, {L, _K}} <- PLocks],
     LockObjects = antidote_lock_crdt:get_lock_objects(Locks),
     MergedSnapshotTime = vectorclock:max([SnapshotTime, State#state.snapshot_time]),
@@ -416,6 +453,11 @@ on_receive_inter_dc_message(_CurrentTime, _SendingDc, #locks_transferred{snapsho
     },
     {Actions, NewState};
 on_receive_inter_dc_message(CurrentTime, SendingDc, #ack_locks{locks = Locks}, State) ->
+    debug_log({event, ack_locks, #{
+        ' kind' => lock_request,
+        sending_dc => SendingDc,
+        locks => Locks
+    }}),
     % remove all remote requests from SendingDc
     NewRemoteRequests = remove_acked_requests(SendingDc, Locks, State#state.remote_requests),
     NewState = State#state{
@@ -508,6 +550,8 @@ print_pid_state(PidState) ->
     }.
 
 print_vc(undefined) ->
+    #{};
+print_vc(ignore) ->
     #{};
 print_vc(Vc) ->
     maps:from_list([{print_dc(K), print_systemtime_micro_seconds(V)} || {K, V} <- vectorclock:to_list(Vc)]).
@@ -1348,7 +1392,6 @@ remote_request_then_transfer_test() ->
     [#update_crdt_state{updates = ExpectedUpdates6}] = Actions6,
 
     ok.
-
 
 
 %%-ifdef(LATER).

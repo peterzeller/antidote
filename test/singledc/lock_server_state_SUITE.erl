@@ -384,14 +384,15 @@ run_action(State, Dc, {update_crdt_state, SnapshotTime, Updates, Data}) ->
     },
 
     add_actions(State2, Dc, Actions);
-run_action(State, Dc, {accept_request, {Pid, _Tag}}) ->
+run_action(State, Dc, {accept_request, {Pid, _Tag}, Vc}) ->
     ReplicaState = maps:get(Dc, State#state.replica_states),
     PidState = maps:get(Pid, ReplicaState#replica_state.pid_states),
     NewPidState = PidState#pid_state{
         status = held
     },
     NewReplicaState = ReplicaState#replica_state{
-        pid_states = maps:put(Pid, NewPidState, ReplicaState#replica_state.pid_states)
+        pid_states = maps:put(Pid, NewPidState, ReplicaState#replica_state.pid_states),
+        snapshot_time = vectorclock:max([Vc, ReplicaState#replica_state.snapshot_time])
     },
 
     State2 = State#state{
