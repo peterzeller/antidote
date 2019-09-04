@@ -55,8 +55,8 @@ get_lock_objects_from_spec(Locks) ->
 get_lock_objects(Locks) ->
     lists:map(fun get_lock_object/1, Locks).
 
-
--spec get_lock_object(antidote_locks:lock()) -> bound_object().
+% Dialyzer bug: does not accept this type signature
+%-spec get_lock_object(antidote_locks:lock()) -> bound_object().
 get_lock_object(Lock) when is_binary(Lock) orelse is_atom(Lock) ->
     {Lock, antidote_crdt_map_rr, ?LOCK_BUCKET}.
 
