@@ -211,8 +211,10 @@ clocksi_istart_tx(Clock, Properties, KeepAlive) ->
     Ref = make_ref(),
     _ = case TxPid of
             undefined ->
-                {ok, _} = clocksi_interactive_coord_sup:start_fsm([{self(), Ref}, Clock,
-                                                                      Properties, KeepAlive]);
+                case clocksi_interactive_coord:start_link({self(), Ref}, Clock, Properties, KeepAlive) of
+                    {ok, _} -> ok;
+                    {error, Reason} -> self() ! {Ref, {'clocksi_interactive_coord_sup:start_fsm failed',  Reason}}
+                end;
             TxPid ->
                 ok = gen_statem:cast(TxPid, {start_tx, {self(), Ref}, Clock, Properties})
         end,
