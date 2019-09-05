@@ -1,5 +1,5 @@
 -module(lock_server_state_SUITE).
--include("antidote.hrl").
+-include_lib("antidote/include/antidote.hrl").
 
 % run with:
 % rebar3 ct --suite lock_server_state_SUITE --dir test/singledc

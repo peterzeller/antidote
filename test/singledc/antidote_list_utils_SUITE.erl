@@ -1,5 +1,5 @@
 -module(antidote_list_utils_SUITE).
--include("antidote.hrl").
+-include_lib("antidote/include/antidote.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -export([all/0, check_topsort/1]).
