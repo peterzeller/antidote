@@ -26,7 +26,10 @@
 %% Description and complete License: see LICENSE file.
 %% -------------------------------------------------------------------
 
-%% @doc This encapsulates the state of the antidote_lock_server
+%% @doc This module implements the main logic for distributing the lock.
+%% It is a purely functional module, where each request takes the current state
+%% and returns the new state and a list of actions to execute.
+%%
 -module(antidote_lock_server_state).
 %%
 -include("antidote.hrl").

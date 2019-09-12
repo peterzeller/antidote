@@ -1,0 +1,81 @@
+Antidote Locks
+==============
+
+This document describes the implementation of locks in Antidote.
+
+Interface and Consistency Model
+-------------------------------
+
+When starting a transaction (or a single read- or update operation), users can specify a set of shared and exclusive locks for the transaction.
+A lock is represented by an arbitrary Erlang term (when used via the protocol buffer interface, this is always a binary).
+
+For example the following called would acquire lock1 exclusively and lock2 and lock3 as a shared lock:
+
+    antidote:start_transaction(ignore, [
+        {exclusive, [<<"lock1">>]}, {shared, [<<"lock2">>, <<"lock3">>]}])
+
+Two transactions are conflicting if they both include a request for the same lock and at least one of the requests is for exclusive access.
+For two conflicting transactions `tx1` and `tx2`, Antidote guarantees serializable consistency. 
+This means that either `commit_timestamp(tx1) <= snapshot(tx2)` or vice versa (`commit_timestamp(tx2) <= snapshot(tx1)`). 
+
+
+The call to `start_transaction` may fail if Antidote is unable to acquire the lock.
+
+
+Implementation
+--------------
+
+The implementation works on two levels: Lock management within a DC and across DCs. 
+Within each DC there is a single process running on one of the nodes, which is responsible for handling locks on the DC.
+To handle locks across DCs, we store the current lock values in Antidotes replicated CRDT storage.
+
+
+Each lock consists of N parts: one for each datacenter.
+Initially, each DC holds its own part of the lock.
+To execute a transaction with an exclusive lock, the DC must hold all N lock parts.
+To execute a transaction with a shared lock, the DC must hold its own part of the lock.
+
+The current state of each lock is stored in a map CRDT, storing the DC currently holding the lock for each lock part.
+If a lock part DC_i has no entry in the CRDT, it is defined to be DC_i.
+
+When locks are requested at a datacenter the following strategy is used for acquiring the locks:
+
+1. Read the current state of all locks.
+2. Check if we have all required locks.
+    1. If lock is missing, send a request to all other DCs and wait for responses
+3. Once all locks are locally available: 
+4. Check that there are no other known requests with conflicting locks that should be served first (or already hold a lock locally)
+5. Acquire the locks, reply with the current snapshot time.
+     
+    
+
+ 
+
+
+
+### Structure
+
+
+
+Future Work
+-----------
+
+- Dynamic Membership: Adding and removing DCs is currently not supported.
+- Fault tolerance: In the following scenarios the current implementation would not work correctly:
+    - CRDT state cannot be updated locally: Implementation will wait for the update indefinitely.
+    - A datacenter crashes: Locks currently held by the crashing datacenter are never released, so no other DC can acquire the locks even when the DC is down for a long time.
+        This could be partially solved by supporting dynamic membership and removing a DC that has been down for a long time. 
+        However, this cannot be done automatically, since we cannot distinguish a network partition from a crashed DC.
+        
+        An alternative approach would be to use quorums such that some DC failures can be tolerated.  
+- Performance: 
+    - The main performance bottleneck at the moment is the time it takes to wait for a particular snapshot time.
+        This can be improved by changing the following constants in antidote.hrl:    
+        - `VECTORCLOCK_UPDATE_PERIOD`: How often vectorclocks are exchanged between shards in the same DC.
+        - `META_DATA_SLEEP`: Sleep between sending meta data to other DCs
+        
+        A better option might be to send updates to other DCs as soon as they are available.
+        When waiting for a clock, we could actively ask other shards instead of waiting for them to tell us after the timeout.
+            
+    - The `antidote_lock_server_state` module is not implemented efficiently in terms of CPU usage. The computation could be done incrementally to save cycles.
+    - The implementation uses a periodic timer. It would be better to calculate the required waiting time and start a timer only on demand.

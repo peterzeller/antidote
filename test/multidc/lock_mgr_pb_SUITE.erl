@@ -49,22 +49,6 @@
     lock_pb_not_leader_dc_test1/1,
     lock_pb_not_leader_dc_test2/1,
     lock_pb_not_leader_dc_test3/1,
-    internal_data_test1/1,
-    internal_data_test2/1,
-    internal_data_test3/1,
-    internal_data_test4/1,
-    locks_speed_test1/1,
-    locks_speed_test2/1,
-    locks_speed_test3/1,
-    locks_speed_test4/1,
-    locks_speed_test5/1,
-    locks_speed_test6/1,
-    locks_speed_test7/1,
-    locks_speed_test8/1,
-    locks_speed_test9/1,
-    locks_speed_test10/1,
-    locks_speed_test11/1,
-    locks_speed_test12/1,
     transaction_locks_speed_test1/1,
     transaction_locks_speed_test2/1,
     transaction_locks_speed_test3/1,
@@ -146,76 +130,60 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-%%    kram,
-%%    kram2,
-%%    lock_pb_test1,
-%%    lock_pb_test2,
-%%    lock_pb_test3,
-%%    lock_pb_combination_test1,
-%%    lock_pb_combination_test2,
-%%    lock_pb_combination_test3,
-%%    lock_pb_combination_test4,
-%%    lock_pb_combination_test5,
-%%    lock_pb_combination_test6,
-%%    lock_pb_combination_test7,
-%%    lock_pb_combination_test8,
-%%    lock_pb_combination_test9,
-%%    lock_pb_combination_test10,
-%%    lock_pb_not_leader_dc_test1,
-%%    lock_pb_not_leader_dc_test2,
-%%    lock_pb_not_leader_dc_test3,
-%%    internal_data_test1,
-%%    internal_data_test2,
-%%    internal_data_test3,
-%%    internal_data_test4,
-%%    locks_speed_test1,
-%%    locks_speed_test2,
-%%    locks_speed_test3,
-%%    locks_speed_test4,
-%%    locks_speed_test5,
-%%    locks_speed_test6,
-%%    locks_speed_test7,
-%%    locks_speed_test8,
-%%    locks_speed_test9,
-%%    locks_speed_test10,
-%%    locks_speed_test11,
-%%    locks_speed_test12,
-%%    transaction_locks_speed_test1,
-%%    transaction_locks_speed_test2,
-%%    transaction_locks_speed_test3,
-%%    transaction_locks_speed_test4,
-%%    transaction_locks_speed_test5,
-%%    transaction_locks_speed_test6,
-%%    transaction_locks_speed_test7,
-%%    transaction_locks_speed_test8,
-%%    transaction_locks_speed_test9,
-%%    transaction_locks_speed_test10,
-%%    transaction_locks_speed_test11,
-%%    transaction_locks_speed_test12,
-%%    transaction_locks_other_node_speed_test1,
-%%    transaction_locks_other_node_speed_test2,
-%%    transaction_locks_other_node_speed_test3,
-%%    transaction_locks_other_node_speed_test4,
-%%    transaction_locks_other_node_speed_test5,
-%%    transaction_locks_other_node_speed_test6,
-%%    transaction_locks_other_node_speed_test7,
-%%    transaction_locks_other_node_speed_test8,
-%%    transaction_locks_other_node_speed_test9,
-%%    transaction_locks_other_node_speed_test10,
-%%    transaction_locks_other_node_speed_test11,
-%%    transaction_locks_other_node_speed_test12,
-%%    pb_locks_other_node_speed_test1,
-%%    pb_locks_other_node_speed_test2,
-%%    pb_locks_other_node_speed_test3,
-%%    pb_locks_other_node_speed_test4,
-%%    pb_locks_other_node_speed_test5,
-%%    pb_locks_other_node_speed_test6,
-%%    pb_locks_other_node_speed_test7,
-%%    pb_locks_other_node_speed_test8,
-%%    pb_locks_other_node_speed_test9,
-%%    pb_locks_other_node_speed_test10,
-%%    pb_locks_other_node_speed_test11,
-%%    pb_locks_other_node_speed_test12
+    kram,
+    kram2,
+    lock_pb_test1,
+    lock_pb_test2,
+    lock_pb_test3,
+    lock_pb_combination_test1,
+    lock_pb_combination_test2,
+    lock_pb_combination_test3,
+    lock_pb_combination_test4,
+    lock_pb_combination_test5,
+    lock_pb_combination_test6,
+    lock_pb_combination_test7,
+    lock_pb_combination_test8,
+    lock_pb_combination_test9,
+    lock_pb_combination_test10,
+    lock_pb_not_leader_dc_test1,
+    lock_pb_not_leader_dc_test2,
+    lock_pb_not_leader_dc_test3,
+    transaction_locks_speed_test1,
+    transaction_locks_speed_test2,
+    transaction_locks_speed_test3,
+    transaction_locks_speed_test4,
+    transaction_locks_speed_test5,
+    transaction_locks_speed_test6,
+    transaction_locks_speed_test7,
+    transaction_locks_speed_test8,
+    transaction_locks_speed_test9,
+    transaction_locks_speed_test10,
+    transaction_locks_speed_test11,
+    transaction_locks_speed_test12,
+    transaction_locks_other_node_speed_test1,
+    transaction_locks_other_node_speed_test2,
+    transaction_locks_other_node_speed_test3,
+    transaction_locks_other_node_speed_test4,
+    transaction_locks_other_node_speed_test5,
+    transaction_locks_other_node_speed_test6,
+    transaction_locks_other_node_speed_test7,
+    transaction_locks_other_node_speed_test8,
+    transaction_locks_other_node_speed_test9,
+    transaction_locks_other_node_speed_test10,
+    transaction_locks_other_node_speed_test11,
+    transaction_locks_other_node_speed_test12,
+    pb_locks_other_node_speed_test1,
+    pb_locks_other_node_speed_test2,
+    pb_locks_other_node_speed_test3,
+    pb_locks_other_node_speed_test4,
+    pb_locks_other_node_speed_test5,
+    pb_locks_other_node_speed_test6,
+    pb_locks_other_node_speed_test7,
+    pb_locks_other_node_speed_test8,
+    pb_locks_other_node_speed_test9,
+    pb_locks_other_node_speed_test10,
+    pb_locks_other_node_speed_test11,
+    pb_locks_other_node_speed_test12
 ].
 
 
@@ -235,7 +203,10 @@ kram2(_Config)->
     Exclusive_Locks = [<<"kram2_key_1">>],
     get_locks_helper3(Pid1, [], Exclusive_Locks),
     get_locks_helper3(Pid2, [], Exclusive_Locks),
-    get_locks_helper3(Pid3, [], Exclusive_Locks).
+    get_locks_helper3(Pid3, [], Exclusive_Locks),
+    antidotec_pb_socket:stop(Pid1),
+    antidotec_pb_socket:stop(Pid2),
+    antidotec_pb_socket:stop(Pid3).
 
 
 %% Testing lock acquisition via protocol buffer interface
@@ -243,7 +214,7 @@ lock_pb_test1(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Bound_object = {<<"lock_pb_test1_key_1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_test1_key_1">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -276,7 +247,7 @@ lock_pb_combination_test1(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Bound_object = {<<"lock_pb_combination_test1_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_combination_test1_key1">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{exclusive_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -298,7 +269,7 @@ lock_pb_combination_test3(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Bound_object = {<<"lock_pb_combination_test3_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_combination_test3_key1">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{locks,Locks},{shared_locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{shared_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -309,7 +280,7 @@ lock_pb_combination_test4(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Bound_object = {<<"lock_pb_combination_test4_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_combination_test4_key1">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{locks,Locks},{shared_locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{exclusive_locks,Locks},{shared_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -320,7 +291,7 @@ lock_pb_combination_test5(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Bound_object = {<<"lock_pb_combination_test5_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_combination_test5_key1">>,<<"lock_pb_combination_test5_key2">>,<<"lock_pb_combination_test5_key3">>,<<"lock_pb_combination_test5_key4">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{locks,Locks},{exclusive_locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{exclusive_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -342,7 +313,7 @@ lock_pb_combination_test7(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Bound_object = {<<"lock_pb_combination_test7_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_combination_test7_key1">>,<<"lock_pb_combination_test7_key2">>,<<"lock_pb_combination_test7_key3">>,<<"lock_pb_combination_test7_key4">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{shared_locks,Locks},{locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{shared_locks,Locks},{exclusive_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -353,7 +324,7 @@ lock_pb_combination_test8(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Bound_object = {<<"lock_pb_combination_test8_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_combination_test8_key1">>,<<"lock_pb_combination_test8_key2">>,<<"lock_pb_combination_test8_key3">>,<<"lock_pb_combination_test8_key4">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{shared_locks,Locks},{locks,Locks},{exclusive_locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{shared_locks,Locks},{exclusive_locks,Locks},{exclusive_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -364,7 +335,7 @@ lock_pb_combination_test9(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Bound_object = {<<"lock_pb_combination_test9_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_combination_test9_key1">>,<<"lock_pb_combination_test9_key2">>,<<"lock_pb_combination_test9_key3">>,<<"lock_pb_combination_test9_key4">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{locks,Locks},{shared_locks,Locks},{exclusive_locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{shared_locks,Locks},{exclusive_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -375,7 +346,7 @@ lock_pb_combination_test10(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
     Bound_object = {<<"lock_pb_combination_test10_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_combination_test10_key1">>,<<"lock_pb_combination_test10_key2">>,<<"lock_pb_combination_test10_key3">>,<<"lock_pb_combination_test10_key4">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{locks,Locks},{shared_locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{exclusive_locks,Locks},{shared_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -387,7 +358,7 @@ lock_pb_not_leader_dc_test1(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Bound_object = {<<"lock_pb_not_leader_dc_test1_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_not_leader_dc_test1_key1">>,<<"lock_pb_not_leader_dc_test1_key2">>,<<"lock_pb_not_leader_dc_test1_key3">>,<<"lock_pb_not_leader_dc_test1_key4">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{shared_locks,Locks},{locks,Locks},{exclusive_locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{shared_locks,Locks},{exclusive_locks,Locks},{exclusive_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -399,7 +370,7 @@ lock_pb_not_leader_dc_test2(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT3),
     Bound_object = {<<"lock_pb_not_leader_dc_test2_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_not_leader_dc_test2_key1">>,<<"lock_pb_not_leader_dc_test2_key2">>,<<"lock_pb_not_leader_dc_test2_key3">>,<<"lock_pb_not_leader_dc_test2_key4">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{locks,Locks},{shared_locks,Locks},{exclusive_locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{shared_locks,Locks},{exclusive_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
@@ -411,176 +382,15 @@ lock_pb_not_leader_dc_test3(_Config) ->
     {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
     Bound_object = {<<"lock_pb_not_leader_dc_test3_key1">>, antidote_crdt_counter_pn, ?BUCKET_BIN},
     Locks = [<<"lock_pb_not_leader_dc_test3_key1">>,<<"lock_pb_not_leader_dc_test3_key2">>,<<"lock_pb_not_leader_dc_test3_key3">>,<<"lock_pb_not_leader_dc_test3_key4">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{locks,Locks},{shared_locks,Locks}]),
+    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{exclusive_locks,Locks},{shared_locks,Locks}]),
     {ok, [Val]} = antidotec_pb:read_objects(Pid, [Bound_object], TxId),
     {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
     _Disconnected = antidotec_pb_socket:stop(Pid),
     ?assertMatch(true, antidotec_counter:is_type(Val)).
 
-%% Tests the internal data of lock_mgr_es and lock_mgr when using pb interface
-internal_data_test1(Config) ->
-    [Node1, _Node2 | _Nodes] = proplists:get_value(nodes, Config),
-    {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
-    Locks = [<<"internal_data_test1_key1">>,<<"internal_data_test1_key2">>,<<"internal_data_test1_key3">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{locks,Locks},{shared_locks,Locks}]),
-    Lock_Info1 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
-
-    Lock_Info2 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-
-    {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
-    _Disconnected = antidotec_pb_socket:stop(Pid),
-    [{_,{using,Locks,Locks}}] = Lock_Info1,
-    [{_,{using,Locks}}] = Lock_Info2.
-
-%% Tests the internal data of lock_mgr_es and lock_mgr when using pb interface
-internal_data_test2(Config) ->
-    [_Node1, Node2 | _Nodes] = proplists:get_value(nodes, Config),
-    {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
-    Locks = [<<"internal_data_test2_key1">>,<<"internal_data_test2_key2">>,<<"internal_data_test2_key3">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{locks,Locks},{shared_locks,Locks}]),
-    Lock_Info1 = rpc:call(Node2, lock_mgr_es, local_locks_info, []),
-    Lock_Info2 = rpc:call(Node2, lock_mgr, local_locks_info, []),
-    {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
-    _Disconnected = antidotec_pb_socket:stop(Pid),
-    [{_,{using,Locks,Locks}}] = Lock_Info1,
-    [{_,{using,Locks}}] = Lock_Info2.
-
-%% Tests the internal data of lock_mgr_es and lock_mgr when using pb interface
-internal_data_test3(Config) ->
-    [_Node1, _Node2,Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    {ok, Pid} = antidotec_pb_socket:start(?ADDRESS, ?PORT3),
-    Locks = [<<"internal_data_test3_key1">>,<<"internal_data_test3_key2">>,<<"internal_data_test3_key3">>],
-    {ok, TxId} = antidotec_pb:start_transaction(Pid, ignore, [{exclusive_locks,Locks},{locks,Locks},{shared_locks,Locks}]),
-    Lock_Info1 = rpc:call(Node3, lock_mgr_es, local_locks_info, []),
-
-    Lock_Info2 = rpc:call(Node3, lock_mgr, local_locks_info, []),
-
-    {ok, _} = antidotec_pb:commit_transaction(Pid, TxId),
-    _Disconnected = antidotec_pb_socket:stop(Pid),
-    [{_,{using,Locks,Locks}}] = Lock_Info1,
-    [{_,{using,Locks}}] = Lock_Info2.
-
-%% Tests the internal data of lock_mgr_es and lock_mgr when using pb interface
-internal_data_test4(Config) ->
-    [Node1, Node2,Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    {ok, Pid1} = antidotec_pb_socket:start(?ADDRESS, ?PORT3),
-    Locks = [<<"internal_data_test4_key1">>,<<"internal_data_test4_key2">>,<<"internal_data_test4_key3">>],
-    {ok, TxId1} = antidotec_pb:start_transaction(Pid1, ignore, [{shared_locks,Locks}]),
-    Lock_Info11 = rpc:call(Node3, lock_mgr_es, local_locks_info, []),
-    Lock_Info21 = rpc:call(Node3, lock_mgr, local_locks_info, []),
-    {ok, Pid2} = antidotec_pb_socket:start(?ADDRESS, ?PORT2),
-    {ok, TxId2} = antidotec_pb:start_transaction(Pid2, ignore, [{shared_locks,Locks}]),
-    Lock_Info12 = rpc:call(Node2, lock_mgr_es, local_locks_info, []),
-    Lock_Info22 = rpc:call(Node2, lock_mgr, local_locks_info, []),
-    {ok, Pid3} = antidotec_pb_socket:start(?ADDRESS, ?PORT1),
-    {ok, TxId3} = antidotec_pb:start_transaction(Pid3, ignore, [{shared_locks,Locks}]),
-    Lock_Info13 = rpc:call(Node1, lock_mgr_es, local_locks_info, []),
-    Lock_Info23 = rpc:call(Node1, lock_mgr, local_locks_info, []),
-    {ok, _} = antidotec_pb:commit_transaction(Pid1, TxId1),
-    _Disconnected = antidotec_pb_socket:stop(Pid1),
-    {ok, _} = antidotec_pb:commit_transaction(Pid2, TxId2),
-    _Disconnected = antidotec_pb_socket:stop(Pid2),
-    {ok, _} = antidotec_pb:commit_transaction(Pid3, TxId3),
-    _Disconnected = antidotec_pb_socket:stop(Pid3),
-
-    [{_,{using,Locks,[]}}] = Lock_Info11,
-    [] = Lock_Info21,
-    [{_,{using,Locks,[]}}] = Lock_Info12,
-    [] = Lock_Info22,
-    [{_,{using,Locks,[]}}] = Lock_Info13,
-    [] = Lock_Info23.
 
 
 
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring a single lock
-locks_speed_test1(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test1_key1">>],
-    {ok,_Timestamp} = rpc:call(Node1, lock_mgr_es, get_locks, [Locks,[],1]),
-    rpc:call(Node1, lock_mgr_es, release_locks, [1]).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring a single lock
-locks_speed_test2(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test2_key1">>],
-    {ok,_Timestamp} = rpc:call(Node1, lock_mgr_es, get_locks, [[],Locks,2]),
-    rpc:call(Node1, lock_mgr_es, release_locks, [2]).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring a single lock
-locks_speed_test3(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test3_key1">>],
-    {ok,_Timestamp} = rpc:call(Node1, lock_mgr_es, get_locks, [Locks,Locks,3]),
-    rpc:call(Node1, lock_mgr_es, release_locks, [3]).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring multiple locks
-locks_speed_test4(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test4_key1">>,<<"lock_speed_test4_key2">>,<<"lock_speed_test4_key3">>,<<"lock_speed_test4_key4">>],
-    {ok,_Timestamp} = rpc:call(Node1, lock_mgr_es, get_locks, [Locks,[],4]),
-    rpc:call(Node1, lock_mgr_es, release_locks, [4]).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring multiple locks
-locks_speed_test5(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test5_key1">>,<<"lock_speed_test5_key2">>,<<"lock_speed_test5_key3">>,<<"lock_speed_test5_key4">>],
-    {ok,_Timestamp} = rpc:call(Node1, lock_mgr_es, get_locks, [[],Locks,5]),
-    rpc:call(Node1, lock_mgr_es, release_locks, [5]).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring multiple locks
-locks_speed_test6(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test6_key1">>,<<"lock_speed_test6_key2">>,<<"lock_speed_test6_key3">>,<<"lock_speed_test6_key4">>],
-    {ok,_Timestamp} = rpc:call(Node1, lock_mgr_es, get_locks, [Locks,Locks,6]),
-    rpc:call(Node1, lock_mgr_es, release_locks, [6]).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring a single lock multiple times
-locks_speed_test7(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test7_key1">>],
-    multiple_get_locks_helper(Node1, Locks, [], 100, 99).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring a single lock multiple times
-locks_speed_test8(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test8_key1">>],
-    multiple_get_locks_helper(Node1, [], Locks, 200, 99).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring a single lock multiple times
-locks_speed_test9(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test9_key1">>],
-    multiple_get_locks_helper(Node1, Locks, Locks, 300, 99).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring multiple lock multiple times
-locks_speed_test10(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test10_key1">>,<<"lock_speed_test10_key2">>,<<"lock_speed_test10_key3">>,<<"lock_speed_test10_key4">>],
-    multiple_get_locks_helper(Node1, Locks, [], 400, 99).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring multiple lock multiple times
-locks_speed_test11(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test11_key1">>,<<"lock_speed_test11_key2">>,<<"lock_speed_test11_key3">>,<<"lock_speed_test11_key4">>],
-    multiple_get_locks_helper(Node1, [], Locks, 500, 99).
-
-% Tests the speed of the lock_mgr_es function get_locks()
-% While acquiring multiple lock multiple times
-locks_speed_test12(Config)->
-    [Node1, _Node2,_Node3 | _Nodes] = proplists:get_value(nodes, Config),
-    Locks = [<<"lock_speed_test12_key1">>,<<"lock_speed_test12_key2">>,<<"lock_speed_test12_key3">>,<<"lock_speed_test12_key4">>],
-    multiple_get_locks_helper(Node1, Locks, Locks, 600, 99).
 
 % Tests the speed of the lock_mgr_es function get_locks() when using the antidote interface
 % While acquiring a single lock

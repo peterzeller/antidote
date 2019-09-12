@@ -26,9 +26,8 @@
 %% Description and complete License: see LICENSE file.
 %% -------------------------------------------------------------------
 
-%% @doc A lock server is running on each datacenter
-%% it is globally registered under the name 'antidote_lock_server'
-%% and manages the locks related to the transactions running on the same shard
+%% @doc A lock server is running on each datacenter.
+%% It is globally registered under the name 'antidote_lock_server'.
 
 -module(antidote_lock_server).
 %%

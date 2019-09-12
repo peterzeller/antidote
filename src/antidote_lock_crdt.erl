@@ -27,6 +27,9 @@
 %% -------------------------------------------------------------------
 
 %% @doc Functions to work with the CRDT that stores lock values
+%% Locks are  stored in a CRDT of type antidote_crdt_map_rr, where the keys are
+%% DC-ids and the values are MV-registers containing DC-ids.
+
 -module(antidote_lock_crdt).
 
 -include("antidote.hrl").
