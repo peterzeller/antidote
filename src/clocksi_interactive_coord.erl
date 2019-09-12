@@ -255,7 +255,7 @@ wait_for_start_transaction({call, Sender}, {start_tx, ClientClock, Properties}, 
     BaseState = init_state(false, false, Properties),
     case start_tx_internal(ClientClock, Properties, BaseState) of
         {ok, State} ->
-    TxnId = (State#state.transaction)#transaction.txn_id,
+            TxnId = (State#state.transaction)#transaction.txn_id,
             {next_state, execute_op, State, {reply, Sender, {ok, TxnId}}};
         {error, Reason} ->
             {stop_and_reply, Reason, {reply, Sender, {error, Reason}}}
@@ -523,7 +523,7 @@ init_state(FullCommit, IsStatic, Properties) ->
 
 %% @doc TODO
 -spec start_tx_internal(snapshot_time(), proplists:proplist(), #state{}) -> {ok, #state{}} | {error, any()}.
-start_tx_internal(ClientClock, Properties, State = #state{is_static = IsStatic}) ->
+start_tx_internal(ClientClock, Properties, State = #state{is_static = false}) ->
     Locks = ordsets:from_list([{Lock, shared} || Lock <- proplists:get_value(shared_locks, Properties, [])]
     ++ [{Lock, exclusive} || Lock <- proplists:get_value(exclusive_locks, Properties, [])]),
     case antidote_locks:obtain_locks(ClientClock, Locks) of
@@ -531,12 +531,8 @@ start_tx_internal(ClientClock, Properties, State = #state{is_static = IsStatic})
             {error, Reason};
         {ok, ClientClock2} ->
             TransactionRecord = create_transaction_record(ClientClock2, false, Properties),
-            _ = case IsStatic of
-                true -> ok;
-                false -> {ok, TransactionRecord#transaction.txn_id}
-            end,
-    % a new transaction was started, increment metrics
-    ?PROMETHEUS_GAUGE:inc(antidote_open_transactions),
+            % a new transaction was started, increment metrics
+            ?PROMETHEUS_GAUGE:inc(antidote_open_transactions),
             {ok, State#state{transaction = TransactionRecord, num_to_read = 0, properties = Properties, locks = Locks}}
     end.
 
