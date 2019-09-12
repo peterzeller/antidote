@@ -34,7 +34,7 @@
 -include("antidote.hrl").
 
 -export([start_fsm/0,
-    start_link/0]).
+         start_link/0]).
 
 -export([init/1]).
 
