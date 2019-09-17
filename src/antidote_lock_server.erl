@@ -178,16 +178,7 @@ request(Req, Timeout, NumTries) ->
             end,
             request(Req, Timeout, NumTries - 1);
         Err:Reason:ST ->
-            logger:error("Could not handle antidote_lock_server request"),
-            logger:error("Could not handle antidote_lock_server request ~p", [Req]),
-            logger:error("Could not handle antidote_lock_server request ~p:~n~p~n~p~n~p", [Req, Err, Reason, ST]),
-            case catch sys:get_status({global, ?SERVER}, 1000) of
-                {status, Pid, {module, Mod}, [PDict, SysState, Parent, Dbg, Misc]} ->
-                    logger:error("Current status of lock server:~n  Pid = ~p~n  Mod = ~p~n  PDict = ~p~n  SysState = ~p~n  Parent = ~p~n  Dbg = ~p~n  Misc = ~p~n  ", [Pid, Mod, PDict, SysState, Parent, Dbg, Misc]);
-                Other ->
-                    logger:error("Could not get debug info~n~p", [Other])
-            end,
-
+            logger:error("Could not handle antidote_lock_server request:~n  ~p~n ~p~n ~p~n ~p", [Req, Err, Reason, ST]),
             case NumTries > 0 of
                 true -> request(Req, Timeout, NumTries - 1);
                 false -> {error, Reason}
@@ -328,6 +319,8 @@ handle_info2({transaction_timeout, FromPid}, State) ->
     case Res of
         ok ->
             % kill the transaction process if it still has the locks
+            logger:error("transaction_timeout: Killing process ~p", [FromPid]),
+            % TODO better to send a message that the clocksi_interactive_coord can understand
             erlang:exit(FromPid, kill);
         _ -> ok
     end,
@@ -383,6 +376,9 @@ handle_release_locks(FromPid, CommitTime, State) ->
             case CheckResult of
                 {error, Reason} ->
                     {reply, {lock_error, Reason}, NewState};
+                {still_waiting, Requester} ->
+                    gen_server:reply(Requester, {error, could_not_acquire_locks}),
+                    {reply, {lock_error, still_waiting}, NewState};
                 ok ->
                     {reply, ok, NewState}
             end

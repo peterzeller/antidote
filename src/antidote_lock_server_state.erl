@@ -474,10 +474,15 @@ on_receive_inter_dc_message(CurrentTime, SendingDc, #ack_locks{locks = Locks}, S
 % checks that we still have access to all the locks the transaction needed.
 % This can only be violated if the lock server crashed, so it is sufficient
 % to check that we still have an entry for the given process.
--spec check_release_locks(pid(), state()) -> ok | {error, Reason :: any()}.
+-spec check_release_locks(pid(), state()) -> ok | {still_waiting, requester()} | {error, Reason :: any()}.
 check_release_locks(FromPid, State) ->
     case maps:find(FromPid, State#state.by_pid) of
-        {ok, _} -> ok;
+        {ok, PS} ->
+            StillWaiting = fun({_, {State, _}}) -> State /= held end,
+            case lists:any(StillWaiting, PS#pid_state.locks) of
+                true -> {still_waiting, PS#pid_state.requester};
+                false -> ok
+            end;
         error -> {error, 'locks no longer available'}
     end.
 

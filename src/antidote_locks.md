@@ -42,14 +42,11 @@ When locks are requested at a datacenter the following strategy is used for acqu
 
 1. Read the current state of all locks.
 2. Check if we have all required locks.
-    1. If lock is missing, send a request to all other DCs and wait for responses
+    - If lock is missing, send a request to all other DCs and wait for responses
 3. Once all locks are locally available: 
-4. Check that there are no other known requests with conflicting locks that should be served first (or already hold a lock locally)
+4. Wait until there are no other known requests with conflicting locks that should be served first (or already hold a lock locally)
 5. Acquire the locks, reply with the current snapshot time.
-     
-    
 
- 
 
 
 

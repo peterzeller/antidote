@@ -77,20 +77,20 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-    simple_transaction_tests_with_locks,
-    locks_in_sequence_check,
-    lock_acquisition_test,
-    get_lock_owned_by_other_dc_2,
-    multi_value_register_test,
-    asynchronous_test_1,
-    asynchronous_test_2 % fail
-%%    asynchronous_test_3, % fail
-%%    asynchronous_test_4, % fail
-%%    asynchronous_test_5, % fail
-%%    a_lot_of_locks_per_transaction_1,  % fail/timeout?
-%%    a_lot_of_locks_per_transaction_2%,
-    %cluster_failure_test_1,
-    %cluster_failure_test_2
+%%    simple_transaction_tests_with_locks,
+%%    locks_in_sequence_check,
+%%    lock_acquisition_test,
+%%    get_lock_owned_by_other_dc_2,
+%%    multi_value_register_test,
+%%    asynchronous_test_1,
+%%    asynchronous_test_2,
+%%    asynchronous_test_3,
+%%    asynchronous_test_4,
+%%    asynchronous_test_5,
+%%    a_lot_of_locks_per_transaction_1,
+%%    a_lot_of_locks_per_transaction_2,
+%%    cluster_failure_test_1,
+    cluster_failure_test_2 %fail
 ].
 
 %% Checks if a transaction on the leading(may create new locks) node can aquire never used
@@ -439,8 +439,10 @@ asynchronous_test_helper2(Node,_,_,0,Clocks,Caller,_,Id)->
     Caller ! {done,Node,Id,Clocks};
 
 asynchronous_test_helper2(Node,Keys,Object,Increments,Clocks,Caller,Delay,Id)->
+    ct:pal("Starting transaction ~p at ~p", [Increments, Node]),
     case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]) of
         {ok, TxId1} ->
+            ct:pal("Started transaction ~p at ~p", [Increments, Node]),
             {ok, Res} = rpc:call(Node, antidote, read_objects, [[Object],TxId1]),
             case Res of
                 [[]] ->
@@ -449,9 +451,11 @@ asynchronous_test_helper2(Node,Keys,Object,Increments,Clocks,Caller,Delay,Id)->
                     ok = rpc:call(Node, antidote, update_objects,[[{Object, assign, Res2+1}],TxId1])
             end,
             {ok, Clock1} = rpc:call(Node, antidote, commit_transaction, [TxId1]),
+            ct:pal("Committed transaction ~p at ~p", [Increments, Node]),
             timer:sleep(Delay),
             asynchronous_test_helper2(Node, Keys, Object,Increments-1,[Clock1|Clocks],Caller,Delay,Id);
         {error,{error,_Missing_Locks}} ->
+            ct:pal("Error starting transaction ~p at ~p", [Increments, Node]),
             timer:sleep(Delay),
             asynchronous_test_helper2(Node, Keys,Object,Increments,Clocks,Caller,Delay,Id)
     end.
@@ -585,7 +589,7 @@ a_lot_of_locks_per_transaction_2(Config) ->
 generate_lock_helper(Amount,String) ->
     generate_lock_helper(Amount,String,[]).
 generate_lock_helper(Amount,String,List) ->
-    New_List = [integer_to_list(Amount)++String++"_Lock"|List],
+    New_List = [list_to_binary(integer_to_list(Amount)++String++"_Lock")|List],
     case Amount of
         A when A > 0 ->
             generate_lock_helper(Amount-1,String, New_List);
@@ -633,16 +637,17 @@ cluster_failure_test_2(Config) ->
             Keys = [cluster_failure_test_2_key],
             {ok,_TxId1} = helper_start_transaction(Keys, Node3, 10),
             %% Kill a node
-            ct:print("Killing node ~w", [Node3]),
+            ct:pal("Killing node ~w", [Node3]),
             [Node3] = test_utils:brutal_kill_nodes([Node3]),
             timer:sleep(10000), % since the brutal kill command is sometimes delayed ...
             %% Test if the lock can be acquired by another dc
             % TODO This rpc:call will crash the lock_mgr and wont let it recover
             % (Assumption: The inter_dc communication does not handle this case and lock_mgr does
             % not have a build in error handling process for this case.)
+            ct:pal("Starting transaction on ~w", [Node2]),
             {error,_} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
             %% Start the node back up and be sure everything works
-            ct:print("Restarting node ~w", [Node3]),
+            ct:pal("Restarting node ~w", [Node3]),
             [Node3] = test_utils:restart_nodes([Node3], Config),
             timer:sleep(10000),
             {ok,TxId2} = helper_start_transaction(Keys, Node2, 10),
