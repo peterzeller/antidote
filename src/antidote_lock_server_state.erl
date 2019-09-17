@@ -1063,9 +1063,9 @@ merge_snapshot_time(V1, V2) -> vectorclock:max([V1, V2]).
 
 
 
--spec get_acquired_locks(#{antidote_locks:lock() => antidote_lock_crdt:value()}, dcid(), [dcid()]) -> [antidote_locks:lock_spec_item()].
+-spec get_acquired_locks(#{antidote_locks:lock() => antidote_lock_crdt:value()}, dcid(), [dcid()]) -> antidote_locks:lock_spec().
 get_acquired_locks(LockValues, MyDcId, AllDcs) ->
-    [{L, K} || {L, LV} <- maps:to_list(LockValues), (K = lock_level(LV, MyDcId, AllDcs)) /= none].
+    ordsets:from_list([{L, K} || {L, LV} <- maps:to_list(LockValues), (K = lock_level(LV, MyDcId, AllDcs)) /= none]).
 
 
 -spec lock_level(antidote_lock_crdt:value(), dcid(), [dcid()]) -> antidote_locks:lock_kind() | none.
