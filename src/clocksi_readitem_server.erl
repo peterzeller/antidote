@@ -217,14 +217,27 @@ handle_cast({perform_read_cast, Coordinator, Key, Type, Transaction, PropertyLis
                    ok.
 perform_read_internal(Coordinator, Key, Type, Transaction, PropertyList,
               _SD0 = #state{prepared_cache = PreparedCache, partition = Partition}) ->
+    antidote_lock_server_state:debug_log({event, clocksi_readitem_server_perform_read_internal1, #{
+        key => Key,
+        type => Type
+    }}),
     TxId = Transaction#transaction.txn_id,
     TxLocalStartTime = TxId#tx_id.local_start_time,
     case check_clock(Key, TxLocalStartTime, PreparedCache, Partition) of
     {not_ready, Time} ->
+        antidote_lock_server_state:debug_log({event, clocksi_readitem_server_perform_read_internal2_not_ready, #{
+            txLocalStartTime => TxLocalStartTime,
+            partition => Partition,
+            time_to_wait => Time
+        }}),
         %% spin_wait(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,PreparedCache,Self);
         _Tref = erlang:send_after(Time, self(), {perform_read_cast, Coordinator, Key, Type, Transaction, PropertyList}),
         ok;
     ready ->
+        antidote_lock_server_state:debug_log({event, clocksi_readitem_server_perform_read_internal2_ready, #{
+            key => Key,
+            type => Type
+        }}),
         return(Coordinator, Key, Type, Transaction, PropertyList, Partition)
     end.
 
@@ -238,6 +251,11 @@ check_clock(Key, TxLocalStartTime, PreparedCache, Partition) ->
     Time = dc_utilities:now_microsec(),
     case TxLocalStartTime > Time of
         true ->
+            antidote_lock_server_state:debug_log({event, clocksi_readitem_server_check_clock_not_ready, #{
+                txLocalStartTime => TxLocalStartTime,
+                time => Time,
+                partition => Partition
+            }}),
             {not_ready, (TxLocalStartTime - Time) div 1000 +1};
         false ->
             check_prepared(Key, TxLocalStartTime, PreparedCache, Partition)
@@ -272,6 +290,10 @@ return(Coordinator, Key, Type, Transaction, PropertyList, Partition) ->
     TxId = Transaction#transaction.txn_id,
     case materializer_vnode:read(Key, Type, VecSnapshotTime, TxId, PropertyList, Partition) of
         {ok, Snapshot} ->
+            antidote_lock_server_state:debug_log({event, clocksi_readitem_server_return_ok, #{
+                key => Key,
+                type => Type
+            }}),
             case Coordinator of
                 {fsm, Sender} -> %% Return Type and Value directly here.
                     gen_statem:cast(Sender, {ok, {Key, Type, Snapshot}});
@@ -279,6 +301,11 @@ return(Coordinator, Key, Type, Transaction, PropertyList, Partition) ->
                     _Ignore=gen_server:reply(Coordinator, {ok, Snapshot})
             end;
         {error, Reason} ->
+            antidote_lock_server_state:debug_log({event, clocksi_readitem_server_return_error, #{
+                key => Key,
+                type => Type,
+                reason => Reason
+            }}),
             case Coordinator of
                 {fsm, Sender} -> %% Return Type and Value directly here.
                     gen_statem:cast(Sender, {error, Reason});

@@ -74,7 +74,15 @@ parse_lock_values(RawVs) ->
 
 read_mv([V]) -> V;
 read_mv(Vs) ->
-    throw({'antidote_lock_crdt does not have a unique value', Vs}).
+    % TODO this should never happen, probably a bug when restoring Antidote state from log
+    case lists:usort(Vs) of
+        [V] ->
+            logger:warning("antidote_lock_crdt contains the same value multiple times: ~p", [Vs]),
+            V;
+        [V|_] ->
+            logger:error("antidote_lock_crdt contains multiple values: ~p", [Vs]),
+            V
+    end.
 
 
 -spec make_lock_updates(antidote_locks:lock(), [{dcid(), dcid()}]) -> [{bound_object(), op_name(), op_param()}].

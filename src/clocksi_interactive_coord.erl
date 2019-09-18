@@ -86,7 +86,6 @@
 -export([
     receive_committed/3,
     receive_logging_responses/3,
-    receive_read_objects_result/3,
     receive_aborted/3,
     single_committing/3,
     receive_prepared/3,
@@ -366,35 +365,6 @@ receive_aborted(info, {_EventType, EventValue}, State) ->
     receive_aborted(cast, EventValue, State).
 
 
-%%%== receive_read_objects_result
-
-%% @doc After asynchronously reading a batch of keys, collect the responses here
-receive_read_objects_result(cast, {ok, {Key, Type, Snapshot}}, CoordState = #state{
-    num_to_read = NumToRead,
-    return_accumulator = ReadKeys
-}) ->
-    %% Apply local updates to the read snapshot
-    UpdatedSnapshot = apply_tx_updates_to_snapshot(Key, CoordState, Type, Snapshot),
-
-    %% Swap keys with their appropriate read values
-    ReadValues = replace_first(ReadKeys, Key, UpdatedSnapshot),
-
-    %% Loop back to the same state until we process all the replies
-    case NumToRead > 1 of
-        true ->
-            {next_state, receive_read_objects_result, CoordState#state{
-                num_to_read = NumToRead - 1,
-                return_accumulator = ReadValues
-            }};
-
-        false ->
-            {next_state, execute_op, CoordState#state{num_to_read = 0},
-                [{reply, CoordState#state.from, {ok, lists:reverse(ReadValues)}}]}
-    end;
-
-%% capture regular events (e.g. logging_vnode responses)
-receive_read_objects_result(info, {_EventType, EventValue}, State) ->
-    receive_read_objects_result(cast, EventValue, State).
 
 
 %%%== receive_logging_responses
@@ -587,21 +557,34 @@ execute_command(read, {Key, Type}, Sender, State = #state{
 
 %% @doc Read a batch of objects, asynchronous
 execute_command(read_objects, Objects, Sender, State = #state{transaction=Transaction}) ->
-    ExecuteReads = fun({Key, Type}, AccState) ->
+    ExecuteReads = fun({Key, Type}) ->
         ?PROMETHEUS_COUNTER:inc(antidote_operations_total, [read_async]),
         Partition = ?LOG_UTIL:get_key_partition(Key),
         ok = clocksi_vnode:async_read_data_item(Partition, Transaction, Key, Type),
-        ReadKeys = AccState#state.return_accumulator,
-        AccState#state{return_accumulator=[Key | ReadKeys]}
-                   end,
 
-    NewCoordState = lists:foldl(
-        ExecuteReads,
-        State#state{num_to_read = length(Objects), return_accumulator=[]},
-        Objects
-    ),
+        case clocksi_readitem_server:read_data_item(Partition, Key, Type, Transaction, []) of
+            {error, Reason} ->
+                {error, Reason};
+            {ok, Snapshot} ->
+                antidote_lock_server_state:debug_log({event, clocksi_interactive_read_objects5, #{
+                    key => Key,
+                    type => Type
+                }}),
 
-    {next_state, receive_read_objects_result, NewCoordState#state{from = Sender}};
+                %% Apply local updates to the read snapshot
+                Snapshot2 = apply_tx_updates_to_snapshot(Key, State, Type, Snapshot),
+                {ok, Snapshot2}
+        end
+    end,
+
+    case antidote_list_utils:pmap_err(ExecuteReads, Objects)  of
+        {ok, ReadResults} ->
+            {next_state, execute_op, State,
+                [{reply, Sender, {ok, ReadResults}}]};
+        {error, Reason} ->
+            {next_state, execute_op, State,
+                [{reply, Sender, {error, Reason}}]}
+    end;
 
 %% @doc Perform update operations on a batch of Objects
 execute_command(update_objects, UpdateOps, Sender, State = #state{transaction=Transaction}) ->

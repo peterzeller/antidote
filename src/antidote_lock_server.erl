@@ -188,6 +188,7 @@ request(Req, Timeout, NumTries) ->
 % called in inter_dc_query_response
 -spec on_interdc_request(antidote_lock_server_state:inter_dc_message()) -> ok.
 on_interdc_request(Request) ->
+    logger:notice("on_interdc_request: ~p", [Request]),
     spawn_link(fun() ->
         request(Request, infinity, 3)
     end),
@@ -490,8 +491,18 @@ run_actions(Actions, State) ->
 
 -spec run_action(antidote_lock_server_state:action(), #state{}) -> ok.
 run_action(#read_crdt_state{snapshot_time = Clock, data = Cont, objects = Objects}, State) ->
+    antidote_lock_server_state:debug_log({event, read_crdt_send, #{
+        clock => Clock,
+        objects => Objects,
+        cont => Cont
+    }}),
     State#state.read_write_process ! #read_crdt{self = self(), clock = Clock, objects = Objects, cont = Cont};
 run_action(#update_crdt_state{updates = Updates, snapshot_time = Clock, data = Cont}, State) ->
+    antidote_lock_server_state:debug_log({event, update_crdt_send, #{
+        clock => Clock,
+        updates => Updates,
+        cont => Cont
+    }}),
     State#state.read_write_process ! #update_crdt{self = self(), clock = Clock, updates = Updates, cont = Cont};
 run_action(#send_inter_dc_message{receiver = Receiver, message = Message}, _State) ->
     % TODO should this be done async?
@@ -580,12 +591,33 @@ read_write_process(Self) ->
 
 
 update_crdt(Self, Clock, Updates, Cont) ->
+    antidote_lock_server_state:debug_log({event, update_crdt_start, #{
+        clock => Clock,
+        updates => Updates,
+        cont => Cont
+    }}),
     {ok, WriteClock} = antidote:update_objects(Clock, [], Updates),
+    antidote_lock_server_state:debug_log({event, update_crdt_done, #{
+        clock => Clock,
+        updates => Updates,
+        cont => Cont
+    }}),
     gen_server:call(Self, #on_complete_crdt_update{cont = Cont, clock = WriteClock}),
     read_write_process(Self).
 
 read_crdt(Self, Clock, Objects, Cont) ->
+    antidote_lock_server_state:debug_log({event, read_crdt_start, #{
+        clock => Clock,
+        objects => Objects,
+        cont => Cont
+    }}),
     {ok, Values, ReadClock} = antidote:read_objects(Clock, [], Objects),
+    antidote_lock_server_state:debug_log({event, read_crdt_done, #{
+        clock => Clock,
+        objects => Objects,
+        values => Values,
+        cont => Cont
+    }}),
     gen_server:call(Self, #on_read_crdt_state{cont = Cont, clock = ReadClock, values = Values}),
     read_write_process(Self).
 

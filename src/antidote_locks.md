@@ -48,9 +48,45 @@ When locks are requested at a datacenter the following strategy is used for acqu
 5. Acquire the locks, reply with the current snapshot time.
 
 
+When receiving a lock request from a different DC:
+
+- For each requested lock:
+    1. Wait until there are no other known requests with conflicting locks that should be served first (or already hold a lock locally)
+    2. Update the CRDT state of the locks to transfer
+    3. Send an inter-dc message to the requesting DC
+
+### Ordering:
+
+To guarantee liveness and fairness, we use the following ordering on requests:
+
+- Each lock request receives a timestamp that is used for ordering.
+    - If all locks are available locally, this is the current system time.
+    - Otherwise it is the current system time plus the value of `INTER_DC_LOCK_REQUEST_DELAY`.
+        This is the expected time we have to wait to get locks from other DCs, so we add this time such that local requests can still use the locks for some time.
+- Lock requests are ordered lexicographically by the pair `{RequestTime, RequestingDc}` (i.e. the DC identifier is used to arbitrate in case of equal request times)
+
+### Performance
+
+Since it is quite expensive to move from one DC to another (the other DC )
 
 
-### Structure
+
+### Code Structure
+
+- clocksi_interactive_coord:
+    - Locks are acquired in `start_tx_internal`.
+    - Locks are released in `before_commit_checks`.
+- antidote_locks: 
+    - Provides the internal Lock API
+- antidote_lock_server:
+    - A gen_server with one instance per DC (the server is registered using the global name `antidote_lock_server`).
+    - Responsible for 
+- antidote_lock_server_state:
+    - Encapsulates the state and logic of the `antidote_lock_server`.
+    - This module is purely functional, so that it is easier to test.
+- antidote_lock_server_sup:
+    - Supervisor for the antidote_lock_server
+    
 
 
 

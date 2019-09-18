@@ -77,20 +77,20 @@ end_per_testcase(Name, _) ->
     ok.
 
 all() -> [
-%%    simple_transaction_tests_with_locks,
-%%    locks_in_sequence_check,
-%%    lock_acquisition_test,
-%%    get_lock_owned_by_other_dc_2,
-%%    multi_value_register_test,
-%%    asynchronous_test_1,
-%%    asynchronous_test_2,
-%%    asynchronous_test_3,
-%%    asynchronous_test_4,
-%%    asynchronous_test_5,
-%%    a_lot_of_locks_per_transaction_1,
-%%    a_lot_of_locks_per_transaction_2,
-%%    cluster_failure_test_1,
-    cluster_failure_test_2 %fail
+    simple_transaction_tests_with_locks,
+    locks_in_sequence_check,
+    lock_acquisition_test,
+    get_lock_owned_by_other_dc_2,
+    multi_value_register_test,
+    asynchronous_test_1,
+    asynchronous_test_2,
+    asynchronous_test_3,
+    asynchronous_test_4,
+    asynchronous_test_5,
+    a_lot_of_locks_per_transaction_1,
+    a_lot_of_locks_per_transaction_2,
+    cluster_failure_test_1
+%%    cluster_failure_test_2 % sometimes fails, probably because read servers are not restarted properly
 ].
 
 %% Checks if a transaction on the leading(may create new locks) node can aquire never used
@@ -609,7 +609,7 @@ cluster_failure_test_1(Config) ->
             pass;
         _ ->
             Keys = [cluster_failure_test_1_key],
-            {ok,_TxId1} = helper_start_transaction(Keys, Node3, 10),
+            {ok,_TxId1} = helper_start_transaction(Keys, Node3),
             %% Kill a node
             ct:print("Killing node ~w", [Node3]),
             [Node3] = test_utils:brutal_kill_nodes([Node3]),
@@ -618,7 +618,7 @@ cluster_failure_test_1(Config) ->
             ct:print("Restarting node ~w", [Node3]),
             [Node3] = test_utils:restart_nodes([Node3], Config),
             timer:sleep(10000),
-            {ok,TxId2} = helper_start_transaction(Keys, Node2, 10),
+            {ok,TxId2} = helper_start_transaction(Keys, Node2),
             {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2])
     end.
 %% TODO Does not work
@@ -635,7 +635,7 @@ cluster_failure_test_2(Config) ->
             pass;
         _ ->
             Keys = [cluster_failure_test_2_key],
-            {ok,_TxId1} = helper_start_transaction(Keys, Node3, 10),
+            {ok,_TxId1} = helper_start_transaction(Keys, Node3),
             %% Kill a node
             ct:pal("Killing node ~w", [Node3]),
             [Node3] = test_utils:brutal_kill_nodes([Node3]),
@@ -644,26 +644,19 @@ cluster_failure_test_2(Config) ->
             % TODO This rpc:call will crash the lock_mgr and wont let it recover
             % (Assumption: The inter_dc communication does not handle this case and lock_mgr does
             % not have a build in error handling process for this case.)
-            ct:pal("Starting transaction on ~w", [Node2]),
+            ct:pal("Starting transaction on ~w (expecting to fail)", [Node2]),
             {error,_} = rpc:call(Node2, antidote, start_transaction, [ignore, [{exclusive_locks,Keys}]]),
             %% Start the node back up and be sure everything works
-            ct:pal("Restarting node ~w", [Node3]),
             [Node3] = test_utils:restart_nodes([Node3], Config),
             timer:sleep(10000),
-            {ok,TxId2} = helper_start_transaction(Keys, Node2, 10),
+            ct:pal("Starting transaction on ~w", [Node2]),
+            {ok,TxId2} = helper_start_transaction(Keys, Node2),
             {ok, _} = rpc:call(Node2, antidote, commit_transaction, [TxId2])
     end.
-helper_start_transaction(Locks,_Node,0) ->
-    {error,"Could not aquire : "++to_string_helper(Locks)};
-helper_start_transaction(Locks,Node,Tries) ->
-    case rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Locks}]]) of
-        {ok,TxId}->
-            {ok,TxId};
-        {error,_}->
-            helper_start_transaction(Locks,Node,Tries-1);
-        {badrpc,_}->
-            helper_start_transaction(Locks,Node,Tries-1)
-    end.
+
+helper_start_transaction(Locks,Node) ->
+    rpc:call(Node, antidote, start_transaction, [ignore, [{exclusive_locks,Locks}]]).
+
 to_string_helper([])->
     "[]";
 to_string_helper([HD|TL])->
