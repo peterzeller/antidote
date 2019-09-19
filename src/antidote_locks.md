@@ -67,7 +67,14 @@ To guarantee liveness and fairness, we use the following ordering on requests:
 
 ### Performance
 
-Since it is quite expensive to move from one DC to another (the other DC )
+Since it is quite expensive to move from one DC to another (the other DC has to catch up to the same snapshot time), we want to avoid sending a lock to a different DC if it is still required locally.
+However, it should eventually be sent to the other DC to guarantee liveness/fairness.
+
+To achieve this goal, we use the following strategy:
+
+Always send the lock to the requesting DC if it has been held locally for more than `?MaxLockHoldDuration`.
+Otherwise, only send the lock if it has not been used in the last `?MinExclusiveLockDuration` (since it is likely to be used again).
+ 
 
 
 
