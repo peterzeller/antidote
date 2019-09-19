@@ -208,7 +208,6 @@ init([]) ->
 %%    spawn_link(fun() ->
 %%        check_lock_state_process(Self)
 %%    end),
-    {ok, _Ref} = timer:send_interval(100, tick),
     S = antidote_lock_server_state:initial(MyDcId, AllDcs, ?MinExclusiveLockDuration, ?MaxLockHoldDuration, ?INTER_DC_LOCK_REQUEST_DELAY),
     {ok, #state{
         s = S,
@@ -297,11 +296,11 @@ handle_cast2(Req, State) ->
 
 
 
-handle_info2(tick, State) ->
+handle_info2({tick, Msg}, State) ->
     Time = erlang:system_time(millisecond),
     logger:notice("tick at ~p", [antidote_lock_server_state:print_systemtime(Time)]),
     S = State#state.s,
-    {Actions, S2} = antidote_lock_server_state:timer_tick(S, Time),
+    {Actions, S2} = antidote_lock_server_state:timer_tick(S, Time, Msg),
     State2 = State#state{s = S2},
     run_actions(Actions, State2),
     {noreply, State2};
@@ -511,8 +510,9 @@ run_action(#accept_request{requester = From, clock = Clock}, _State) ->
     gen_server:reply(From, {ok, Clock});
 run_action(#abort_request{requester = From}, _State) ->
     gen_server:reply(From, {error, no_locks});
-run_action(#set_timeout{}, _State) ->
-    todo.
+run_action(#set_timeout{timeout = T, message = M}, _State) ->
+    {ok, _Ref} = timer:send_after(T, {tick, M}),
+    ok.
 
 
 -spec send_interdc_lock_request(dcid(), antidote_lock_server_state:inter_dc_message(), integer()) -> ok.

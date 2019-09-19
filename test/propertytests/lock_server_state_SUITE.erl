@@ -44,7 +44,7 @@ explore() ->
 
 
 explore(_Config) ->
-    dorer:check(#{max_shrink_time => {3000, second}, n => 1000}, fun() ->
+    dorer:check(#{max_shrink_time => {1000, second}, n => 1000}, fun() ->
         State1 = my_run_commands(initial_state()),
         State = complete_run(State1),
         log_commands(State),
@@ -60,7 +60,7 @@ many_requests(_Config) ->
     State2 = lists:foldl(fun(Cmd = {request, _Pid, R, _}, Acc) ->
         io:format("Time ~p: RUN ~w~n", [Acc#state.time, Cmd]),
         Acc2 = next_state(Acc, Cmd),
-        next_state(Acc2, {tick, R, 1})
+        Acc2#state{time = Acc2#state.time + 1}
     end, State1, InitialRequests),
 
 
@@ -84,7 +84,6 @@ run_many_requests(State, N) ->
                     throw('run_many_requests: probably contains looping actions')
             end,
             NextCommands = begin
-                NeedsTick = [R || R <- replicas(), RS <- [maps:get(R, State#state.replica_states)], RS#replica_state.time + 50 < State#state.time],
                 FutureActions1 = filter_future_actions(State#state.future_actions),
                 % some actions need more time
                 FutureActions = lists:filter(fun
@@ -106,14 +105,12 @@ run_many_requests(State, N) ->
                     % execute actions as soon as possible
                     FutureActions /= [] ->
                         [{action, hd(FutureActions)}];
-                    % execute ticks if necessary:
-                    NeedsTick /= [] ->
-                        [{tick, R, 0} || R <- NeedsTick];
-                    % otherwise just let some time pass and request
                     true ->
-                        [{tick, hd(replicas()), 5}]
+                        []
                 end
             end,
+
+
 
             NextState = lists:foldl(fun(Cmd, Acc) ->
                 Acc2 = next_state_l(Acc, Cmd),
@@ -127,8 +124,10 @@ run_many_requests(State, N) ->
 
                 end
             end, State, NextCommands),
-
-            run_many_requests(NextState, N)
+            case State == NextState of
+                true -> State;
+                false -> run_many_requests(NextState, N)
+            end
     end.
 
 
@@ -178,14 +177,15 @@ my_run_commands(State) ->
     case length(State#state.cmds) < 1000 andalso dorer:gen(command, dorer_generators:has_more()) of
         false -> State;
         true ->
-            Cmd = gen_command(State),
-            dorer:log("Time ~p: RUN ~w", [State#state.time, Cmd]),
-            NextState = next_state(State#state{cmds = [Cmd | State#state.cmds]}, Cmd),
-            dorer:log("State:~n ~p", [print_state(NextState)]),
-%%            dorer:log("Active requests: ~p", [maps:map(fun(Dc, RS) ->
-%%                maps:keys(RS#replica_state.pid_states) end, NextState#state.replica_states)]),
-            check_invariant(NextState),
-            my_run_commands(NextState)
+            case gen_command(State) of
+                done -> State;
+                Cmd ->
+                    dorer:log("Time ~p: RUN ~w", [State#state.time, Cmd]),
+                    NextState = next_state(State#state{cmds = [Cmd | State#state.cmds]}, Cmd),
+                    dorer:log("State:~n ~p", [print_state(NextState)]),
+                    check_invariant(NextState),
+                    my_run_commands(NextState)
+            end
     end.
 
 complete_run(State) ->
@@ -202,31 +202,30 @@ complete_run(State, LastAction) ->
     case State#state.time < min(10000, LastAction + 500) of
         false -> State;
         true ->
-            Cmd = complete_run_next_command(State),
-            dorer:log("_Time ~p: RUN ~w", [State#state.time, Cmd]),
-            NextState = next_state(State#state{cmds = [Cmd | State#state.cmds]}, Cmd),
-            dorer:log("_State:~n ~p", [print_state(NextState)]),
-            check_invariant(NextState),
-            LastAction2 = case Cmd of
-                {tick, _, _} -> LastAction;
-                _ -> State#state.time
-            end,
-            complete_run(NextState, LastAction2)
+            case complete_run_next_command(State) of
+                done -> State;
+                Cmd ->
+                    dorer:log("_Time ~p: RUN ~w", [State#state.time, Cmd]),
+                    NextState = next_state(State#state{cmds = [Cmd | State#state.cmds]}, Cmd),
+                    dorer:log("_State:~n ~p", [print_state(NextState)]),
+                    check_invariant(NextState),
+                    LastAction2 = case Cmd of
+                        {tick, _, _, _} -> LastAction;
+                        _ -> State#state.time
+                    end,
+                    complete_run(NextState, LastAction2)
+            end
     end.
 
 complete_run_next_command(State) ->
-    NeedsTick = [R || R <- replicas(), RS <- [maps:get(R, State#state.replica_states)], RS#replica_state.time + 50 < State#state.time],
     FutureActions = filter_future_actions(State#state.future_actions),
     if
     % execute actions as soon as possible
         FutureActions /= [] ->
             {action, hd(FutureActions)};
-    % execute ticks if necessary:
-        NeedsTick /= [] ->
-            {tick, hd(NeedsTick), 0};
-    % otherwise just let some time pass
+    % otherwise we are done
         true ->
-            {tick, hd(replicas()), 100}
+            done
     end.
 
 
@@ -249,29 +248,26 @@ initial_state_r(R, MinExclusiveLockDuration, MaxLockHoldDuration, RemoteRequestD
     }.
 
 gen_command(State) ->
-    NeedsTick = [R || R <- replicas(), RS <- [maps:get(R, State#state.replica_states)], RS#replica_state.time + 50 < State#state.time],
     NeedsActions = needs_action(State),
     if
         NeedsActions /= [] ->
             hd(NeedsActions);
-%%            dorer:gen([command, needs_action],
-%%                dorer_generators:oneof(NeedsActions));
-        NeedsTick /= [] ->
-            {tick, hd(NeedsTick), 0};
-%%            dorer:gen([command, needs_tick],
-%%                dorer_generators:no_shrink(dorer_generators:oneof([{tick, R, 0} || R <- NeedsTick])));
         true ->
             P1 = if
                 State#state.time < 100 -> 20;
                 true -> 0
             end,
             FutureActions = filter_future_actions(State#state.future_actions),
-            dorer:gen([command, normal],
-                dorer_generators:frequency_gen([
-                    {P1, {request, State#state.max_pid + 1, replica(), lock_spec()}},
-                    {20, {tick, replica(), dorer_generators:oneof([100, 50, 20, 10, 5, 1])}},
-                    {10 * length(FutureActions), dorer_generators:oneof([{action, A} || A <- FutureActions])}
-                ]))
+            if
+                FutureActions == [] andalso P1 == 0 ->
+                    done;
+                true ->
+                    dorer:gen([command, normal],
+                        dorer_generators:frequency_gen([
+                            {P1, {request, State#state.max_pid + 1, replica(), lock_spec()}},
+                            {10 * length(FutureActions), dorer_generators:oneof([{action, A} || A <- FutureActions])}
+                        ]))
+            end
     end.
 
 needs_action(State) ->
@@ -379,18 +375,6 @@ next_state(State, {request, Pid, Replica, LockSpec}) ->
     },
     State3 = add_actions(State2, Replica, Actions),
     State3;
-next_state(State, {tick, Replica, DeltaTime}) ->
-    Rs = maps:get(Replica, State#state.replica_states),
-    NewTime = State#state.time + DeltaTime,
-    {Actions, NewRs} = antidote_lock_server_state:timer_tick(Rs#replica_state.lock_server_state, NewTime),
-    State2 = State#state{
-        time = NewTime,
-        replica_states = maps:put(Replica, Rs#replica_state{
-            lock_server_state = NewRs,
-            time = NewTime
-        }, State#state.replica_states)
-    },
-    add_actions(State2, Replica, Actions);
 next_state(State, {action, {T1, Dc1, Action1}}) ->
     case pick_most_similar({T1, Dc1, Action1}, State#state.future_actions) of
         error ->
@@ -403,6 +387,19 @@ next_state(State, {action, {T1, Dc1, Action1}}) ->
     end;
 next_state(_, Other) ->
     throw({unhandled_next_state_action, Other}).
+
+run_tick(Replica, State, DeltaTime, Msg) ->
+    Rs = maps:get(Replica, State#state.replica_states),
+    NewTime = State#state.time + DeltaTime,
+    {Actions, NewRs} = antidote_lock_server_state:timer_tick(Rs#replica_state.lock_server_state, NewTime, Msg),
+    State2 = State#state{
+        time = NewTime,
+        replica_states = maps:put(Replica, Rs#replica_state{
+            lock_server_state = NewRs,
+            time = NewTime
+        }, State#state.replica_states)
+    },
+    add_actions(State2, Replica, Actions).
 
 
 
@@ -508,7 +505,9 @@ run_action(State, Dc, {release_locks, Pid}) ->
     State2 = State#state{
         replica_states = maps:put(Dc, NewReplicaState2, State#state.replica_states)
     },
-    add_actions(State2, Dc, Actions).
+    add_actions(State2, Dc, Actions);
+run_action(State, Dc, {set_timeout, T, M}) ->
+    run_tick(Dc, State, T, M).
 
 calculate_crdt_states(ReadSnapshot, Objects, State) ->
     Effects = lists:filter(fun({Clock, _}) -> vectorclock:le(Clock, ReadSnapshot) end, State#state.crdt_effects),
@@ -580,7 +579,7 @@ find_reply(Pid, [{action, {_T, _Dc, Action}} | Rest], Time) ->
         _ ->
             find_reply(Pid, Rest, Time)
     end;
-find_reply(Pid, [{tick, _R, T} | Rest], Time) ->
+find_reply(Pid, [{tick, _R, T, _M} | Rest], Time) ->
     find_reply(Pid, Rest, Time - T);
 find_reply(Pid, [Other | Rest], Time) ->
     % sanity check

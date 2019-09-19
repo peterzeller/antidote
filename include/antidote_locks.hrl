@@ -53,5 +53,6 @@
 }).
 
 -record(set_timeout, {
-    timeout :: antidote_lock_server_state:milliseconds()
+    timeout :: antidote_lock_server_state:milliseconds(),
+    message :: any()
 }).

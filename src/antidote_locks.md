@@ -118,4 +118,3 @@ Future Work
         When waiting for a clock, we could actively ask other shards instead of waiting for them to tell us after the timeout.
             
     - The `antidote_lock_server_state` module is not implemented efficiently in terms of CPU usage. The computation could be done incrementally to save cycles.
-    - The implementation uses a periodic timer. It would be better to calculate the required waiting time and start a timer only on demand.

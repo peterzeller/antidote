@@ -53,7 +53,7 @@
     get_timer_active/1,
     is_lock_process/2,
     get_remote_waiting_locks/1,
-    timer_tick/2,
+    timer_tick/3,
     debug_log/1,
     on_read_crdt_state/5,
     on_receive_inter_dc_message/4,
@@ -522,7 +522,7 @@ get_timer_active(#state{timer_Active = B}) -> B.
 
 
 
-timer_tick(State, Time) ->
+timer_tick(State, Time, _Msg) ->
     debug_log({event, timer_tick, #{
         current_time => print_systemtime(Time)
     }}),
@@ -844,27 +844,42 @@ handle_remote_requests(State, CurrentTime) ->
             {[], State};
         true ->
             % Select the locks which are eligible to be sent to other DC:
-            LocksToTransfer = lists:filter(fun(Req) ->
+            LocksWaitTime = lists:filtermap(fun(Req) ->
                 T = Req#remote_request.request_time,
                 {L, K} = Req#remote_request.lock_item,
                 Dc = Req#remote_request.requester,
-                % request must not be from the future
-                T =< CurrentTime
+                NoConflicts =
+                    % there is no conflicting local request with a smaller time
+                    not exists_local_request(L, State#state.dc_id, T, Dc, K, State)
+                    % there is no conflicting remote request with a smaller time
+                    andalso not exists_conflicting_remote_request(Dc, L, K, T, State),
                 % request not already answered
-                    andalso not orddict:is_key(Req, State#state.answered_remote_requests)
-                    andalso
-                    (
-                        % last use is some time ago
-                        maps:get(L, State#state.last_used, 0) =< CurrentTime - State#state.min_exclusive_lock_duration
-                            orelse
-                            % lock was held for a longer period of time already
-                        maps:get(L, State#state.time_acquired, 0) =< CurrentTime - State#state.max_lock_hold_duration
-                    )
-                % there is no conflicting local request with a smaller time
-                    andalso not exists_local_request(L, State#state.dc_id, T, Dc, K, State)
-                % there is no conflicting remote request with a smaller time
-                    andalso not exists_conflicting_remote_request(Dc, L, K, T, State)
+                AlreadyAnswered = orddict:is_key(Req, State#state.answered_remote_requests),
+
+                case NoConflicts andalso not AlreadyAnswered of
+                    true ->
+                        WaitTime = max(
+                            T - CurrentTime,
+                            min(
+                                maps:get(L, State#state.last_used, 0) + State#state.min_exclusive_lock_duration - CurrentTime,
+                                maps:get(L, State#state.time_acquired, 0) + State#state.max_lock_hold_duration - CurrentTime)),
+                        {true, {Req, WaitTime}};
+                    false ->
+                        false
+                end
+
             end, State#state.remote_requests),
+
+            LocksToTransfer = lists:filtermap(fun({Req, T}) ->
+                case T =< 0 of
+                    true -> {true, Req};
+                    false -> false
+                end
+                end, LocksWaitTime),
+
+            TickTime = lists:min([infty | [T || {_, T} <- LocksWaitTime, T > 0]]),
+            TimeoutActions = [#set_timeout{timeout = TickTime} || TickTime /= infty],
+
 
             LocksToTransferLSet = ordsets:from_list([LK || #remote_request{lock_item = LK} <- LocksToTransfer]),
             LockObjects = lists:usort(antidote_lock_crdt:get_lock_objects([L || {L, _K} <- LocksToTransferLSet])),
@@ -881,7 +896,8 @@ handle_remote_requests(State, CurrentTime) ->
                         locks_to_transfer = LocksToTransfer
                     }}
                 || LocksToTransfer /= []
-            ] ++ RequestAgainLocal,
+            ] ++ RequestAgainLocal
+                ++ TimeoutActions,
 
 
             State3 = State2#state{
