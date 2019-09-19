@@ -89,7 +89,7 @@ read_mv(Vs) ->
 make_lock_updates(_Lock, []) -> [];
 make_lock_updates(Lock, Updates) ->
     [{get_lock_object(Lock), update,
-        [{{K, antidote_crdt_register_mv}, {assign, V}} || {K,V} <- Updates]}].
+        [{{K, antidote_crdt_register_mv}, {assign, V}} || {K, V} <- Updates]}].
 
 
 

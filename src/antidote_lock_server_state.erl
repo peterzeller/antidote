@@ -79,6 +79,7 @@
     requester :: requester()
 }).
 
+-type pid_state() :: #pid_state{}.
 
 -type milliseconds() :: integer().
 
@@ -89,6 +90,8 @@
     lock_item :: antidote_locks:lock_spec_item()
 }).
 
+-type remote_request() :: #remote_request{}.
+
 -record(state, {
     %% own datacenter id
     dc_id :: dcid(),
@@ -97,13 +100,13 @@
     %% latest snapshot,
     snapshot_time = vectorclock:new() :: snapshot_time(),
     % for each local lock request (requester-pid) the corresponding state
-    by_pid = #{} :: #{pid() => #pid_state{}},
+    by_pid = #{} :: #{pid() => pid_state()},
     % for each lock: remote data centers who want this lock
-    remote_requests = [] :: [#remote_request{}],
+    remote_requests = [] :: [remote_request()],
     % remote requests that already have been fulfilled
     % for every remote request, we store the snapshot time where the lock was last read
     % (might be removed from here if additional permissions come in)
-    answered_remote_requests = [] :: orddict:orddict(#remote_request{}, snapshot_time()),
+    answered_remote_requests = [] :: orddict:orddict(remote_request(), snapshot_time()),
     % is the retry timer is active or not?
     timer_Active = false :: boolean(),
     % for each exclusive lock we have: the time when we acquired it
@@ -172,11 +175,11 @@
 
 
 -record(handle_remote_requests_cont, {
-    locks_to_transfer :: [#remote_request{}]
+    locks_to_transfer :: [remote_request()]
 }).
 
 -record(handle_remote_requests_cont2, {
-    locks_transferred :: [#remote_request{}]
+    locks_transferred :: [remote_request()]
 }).
 
 -record(new_request_cont, {
@@ -327,7 +330,7 @@ on_read_crdt_state(CurrentTime, Cont = #handle_remote_requests_cont{}, ReadClock
     RemoteRequests = Cont#handle_remote_requests_cont.locks_to_transfer,
     handle_remote_requests_cont(CurrentTime, RemoteRequests, ParsedCrdtValues, ReadClock, State).
 
--spec handle_remote_requests_cont(milliseconds(), [#remote_request{}], [antidote_lock_crdt:value()], snapshot_time(), state()) -> {actions(), state()}.
+-spec handle_remote_requests_cont(milliseconds(), [remote_request()], [antidote_lock_crdt:value()], snapshot_time(), state()) -> {actions(), state()}.
 handle_remote_requests_cont(CurrentTime, RemoteRequests, ParsedCrdtValues, ReadClock, State) ->
     Locks = lists:usort([L || #remote_request{lock_item = {L, _}} <- RemoteRequests]),
     LockValues = maps:from_list(lists:zip(Locks, ParsedCrdtValues)),
@@ -628,7 +631,7 @@ is_lock_process(Pid, State) ->
 
 
 % removes all locks requests from SendingDC with the given locks
--spec remove_acked_requests(dcid(), antidote_locks:lock_spec(), [#remote_request{}]) -> [#remote_request{}].
+-spec remove_acked_requests(dcid(), antidote_locks:lock_spec(), [remote_request()]) -> [remote_request()].
 remove_acked_requests(SendingDc, Locks, LockRequests) ->
     lists:filter(fun(#remote_request{requester = RequesterDc, lock_item = {L, K}}) ->
         not (RequesterDc == SendingDc
@@ -819,7 +822,7 @@ handle_local_requests(State, CurrentTime) ->
 %% Calculates the minimum request time for each lock
 %% The time is tupled with pid to get a total order
 %% Only includes locks with lock kind >= LockKind
--spec min_request_times(#{pid() => #pid_state{}}, antidote_locks:lock_kind()) -> #{antidote_locks:lock() => {milliseconds(), pid()}}.
+-spec min_request_times(#{pid() => pid_state()}, antidote_locks:lock_kind()) -> #{antidote_locks:lock() => {milliseconds(), pid()}}.
 min_request_times(A, LockKind) ->
     antidote_list_utils:group_by(
         fun({L, _T}) -> L end,
@@ -953,7 +956,7 @@ set_lock_acquired_time(CurrentTime, PidStatePidStateLocks, State) ->
         end, State#state.time_acquired, PidStatePidStateLocks),
     State#state{time_acquired = EL}.
 
--spec update_last_used(milliseconds(), #pid_state{}, #{antidote_locks:lock() => milliseconds()}) -> #{antidote_locks:lock() => milliseconds()}.
+-spec update_last_used(milliseconds(), pid_state(), #{antidote_locks:lock() => milliseconds()}) -> #{antidote_locks:lock() => milliseconds()}.
 update_last_used(CurrentTime, PidState, LastUsed) ->
     orddict:fold(fun(L, _, Acc) ->
         maps:put(L, CurrentTime, Acc)

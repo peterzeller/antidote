@@ -44,7 +44,7 @@ explore() ->
 
 
 explore(_Config) ->
-    dorer:check(#{max_shrink_time => {1000, second}, n => 1000}, fun() ->
+    dorer:check(#{max_shrink_time => {1000, second}, n => 500}, fun() ->
         State1 = my_run_commands(initial_state()),
         State = complete_run(State1),
         log_commands(State),

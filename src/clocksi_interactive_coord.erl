@@ -384,10 +384,10 @@ receive_logging_responses(cast, Response, State = #state{
 }) ->
 
     NewAcc = case Response of
-                 {error, _r} = Err -> Err;
-                 {ok, _OpId} -> ReturnAcc;
-                 timeout -> ReturnAcc
-             end,
+        {error, _r} = Err -> Err;
+        {ok, _OpId} -> ReturnAcc;
+        timeout -> ReturnAcc
+    end,
 
     %% Loop back to the same state until we process all the replies
     case NumToReply > 1 of
@@ -492,7 +492,7 @@ init_state(FullCommit, IsStatic, Properties) ->
 
 
 %% @doc TODO
--spec start_tx_internal(snapshot_time(), proplists:proplist(), #state{}) -> {ok, #state{}} | {error, any()}.
+-spec start_tx_internal(snapshot_time(), proplists:proplist(), state()) -> {ok, state()} | {error, any()}.
 start_tx_internal(ClientClock, Properties, State = #state{is_static = false}) ->
     Locks = ordsets:from_list([{Lock, shared} || Lock <- proplists:get_value(shared_locks, Properties, [])]
     ++ [{Lock, exclusive} || Lock <- proplists:get_value(exclusive_locks, Properties, [])]),
@@ -514,16 +514,16 @@ create_transaction_record(ClientClock, _IsStatic, Properties) ->
     %% Seed the random because you pick a random read server, this is stored in the process state
     _Res = rand:seed(exsplus, {erlang:phash2([node()]), erlang:monotonic_time(), erlang:unique_integer()}),
     {ok, SnapshotTime} = case ClientClock of
-                             ignore ->
-                                 get_snapshot_time();
-                             _ ->
-                                 case antidote:get_txn_property(update_clock, Properties) of
-                                     update_clock ->
-                                         get_snapshot_time(ClientClock);
-                                     no_update_clock ->
-                                         {ok, ClientClock}
-                                 end
-                         end,
+        ignore ->
+            get_snapshot_time();
+        _ ->
+            case antidote:get_txn_property(update_clock, Properties) of
+                update_clock ->
+                    get_snapshot_time(ClientClock);
+                no_update_clock ->
+                    {ok, ClientClock}
+            end
+    end,
     DcId = ?DC_META_UTIL:get_my_dc_id(),
     LocalClock = ?VECTORCLOCK:get(DcId, SnapshotTime),
     TransactionId = #tx_id{local_start_time = LocalClock, server_pid = self()},
@@ -604,7 +604,7 @@ execute_command(update_objects, UpdateOps, Sender, State = #state{transaction=Tr
                     updated_partitions=UpdatedPartitions
                 }
         end
-                     end,
+    end,
 
     NewCoordState = lists:foldl(
         ExecuteUpdates,
@@ -640,40 +640,40 @@ reply_to_client(State = #state{
         Node ->
 
             Reply = case TxState of
-                        committed_read_only ->
-                            case IsStatic of
-                                false ->
-                                    {ok, {TxId, Transaction#transaction.vec_snapshot_time}};
-                                true ->
-                                    {ok, {TxId, ReturnAcc, Transaction#transaction.vec_snapshot_time}}
-                            end;
+                committed_read_only ->
+                    case IsStatic of
+                        false ->
+                            {ok, {TxId, Transaction#transaction.vec_snapshot_time}};
+                        true ->
+                            {ok, {TxId, ReturnAcc, Transaction#transaction.vec_snapshot_time}}
+                    end;
 
-                        committed ->
-                            %% Execute post_commit_hooks
-                            _Result = execute_post_commit_hooks(ClientOps),
-                            %% TODO: What happens if commit hook fails?
-                            DcId = ?DC_META_UTIL:get_my_dc_id(),
-                            CausalClock = ?VECTORCLOCK:set(DcId, CommitTime, Transaction#transaction.vec_snapshot_time),
-                            case IsStatic of
-                                false ->
-                                    {ok, {TxId, CausalClock}};
-                                true ->
-                                    {ok, CausalClock}
-                            end;
+                committed ->
+                    %% Execute post_commit_hooks
+                    _Result = execute_post_commit_hooks(ClientOps),
+                    %% TODO: What happens if commit hook fails?
+                    DcId = ?DC_META_UTIL:get_my_dc_id(),
+                    CausalClock = ?VECTORCLOCK:set(DcId, CommitTime, Transaction#transaction.vec_snapshot_time),
+                    case IsStatic of
+                        false ->
+                            {ok, {TxId, CausalClock}};
+                        true ->
+                            {ok, CausalClock}
+                    end;
 
-                        aborted ->
-                            ?PROMETHEUS_COUNTER:inc(antidote_aborted_transactions_total),
-                            case ReturnAcc of
-                                {error, Reason} ->
-                                    {error, Reason};
-                                _ ->
-                                    {error, aborted}
-                            end
+                aborted ->
+                    ?PROMETHEUS_COUNTER:inc(antidote_aborted_transactions_total),
+                    case ReturnAcc of
+                        {error, Reason} ->
+                            {error, Reason};
+                        _ ->
+                            {error, aborted}
+                    end
 
-                        %% can never match (dialyzer)
+                %% can never match (dialyzer)
 %%                        Reason ->
 %%                            {TxId, Reason}
-                    end,
+            end,
             case is_pid(Node) of
                 false ->
                     gen_statem:reply(Node, Reply);
@@ -755,11 +755,11 @@ perform_read({Key, Type}, UpdatedPartitions, Transaction, Sender) ->
     Partition = ?LOG_UTIL:get_key_partition(Key),
 
     WriteSet = case lists:keyfind(Partition, 1, UpdatedPartitions) of
-                   false ->
-                       [];
-                   {Partition, WS} ->
-                       WS
-               end,
+        false ->
+            [];
+        {Partition, WS} ->
+            WS
+    end,
 
     case ?CLOCKSI_VNODE:read_data_item(Partition, Transaction, Key, Type, WriteSet) of
         {ok, Snapshot} ->
@@ -780,11 +780,11 @@ perform_update(Op, UpdatedPartitions, Transaction, _Sender, ClientOps) ->
     Partition = ?LOG_UTIL:get_key_partition(Key),
 
     WriteSet = case lists:keyfind(Partition, 1, UpdatedPartitions) of
-                   false ->
-                       [];
-                   {Partition, WS} ->
-                       WS
-               end,
+        false ->
+            [];
+        {Partition, WS} ->
+            WS
+    end,
 
     %% Execute pre_commit_hook if any
     case antidote_hooks:execute_pre_commit_hook(Key, Type, Update) of
@@ -898,35 +898,35 @@ prepare_done(State1, Action) ->
         {error, Reason} ->
             abort(State1#state{return_accumulator = {error, Reason}});
         {ok, State} ->
-	    case Action of
-		single_committing ->
-		    UpdatedPartitions = State#state.updated_partitions,
-		    Transaction = State#state.transaction,
-		    ok = ?CLOCKSI_VNODE:single_commit(UpdatedPartitions, Transaction),
-		    {next_state, single_committing, State#state{state = committing, num_to_ack = 1}};
-		commit_read_only ->
-		    reply_to_client(State#state{state = committed_read_only});
-		{reply_and_then_commit, CommitSnapshotTime} ->
-		    From = State#state.from,
-		    {next_state, committing, State#state{
-		        state = committing,
-		        commit_time = CommitSnapshotTime},
-		        [{reply, From, {ok, CommitSnapshotTime}}]};
-		{normal_commit, MaxPrepareTime} ->
-		    UpdatedPartitions = State#state.updated_partitions,
-		    Transaction = State#state.transaction,
-		                ok = ?CLOCKSI_VNODE:commit(UpdatedPartitions, Transaction, MaxPrepareTime),
-		    {next_state, receive_committed,
-		                    State#state{
-		                        num_to_ack = length(UpdatedPartitions),
-		                        commit_time = MaxPrepareTime,
-		                        state = committing}}
+            case Action of
+                single_committing ->
+                    UpdatedPartitions = State#state.updated_partitions,
+                    Transaction = State#state.transaction,
+                    ok = ?CLOCKSI_VNODE:single_commit(UpdatedPartitions, Transaction),
+                    {next_state, single_committing, State#state{state = committing, num_to_ack = 1}};
+                commit_read_only ->
+                    reply_to_client(State#state{state = committed_read_only});
+                {reply_and_then_commit, CommitSnapshotTime} ->
+                    From = State#state.from,
+                    {next_state, committing, State#state{
+                        state = committing,
+                        commit_time = CommitSnapshotTime},
+                        [{reply, From, {ok, CommitSnapshotTime}}]};
+                {normal_commit, MaxPrepareTime} ->
+                    UpdatedPartitions = State#state.updated_partitions,
+                    Transaction = State#state.transaction,
+                    ok = ?CLOCKSI_VNODE:commit(UpdatedPartitions, Transaction, MaxPrepareTime),
+                    {next_state, receive_committed,
+                        State#state{
+                            num_to_ack = length(UpdatedPartitions),
+                            commit_time = MaxPrepareTime,
+                            state = committing}}
             end
     end.
 
 
 %% Checks executed before starting the commit phase.
--spec before_commit_checks(#state{}) -> {ok, #state{}} | {error, any()}.
+-spec before_commit_checks(state()) -> {ok, state()} | {error, any()}.
 before_commit_checks(State) ->
     Transaction = State#state.transaction,
     CommitSnapshot =
@@ -961,7 +961,7 @@ process_prepared(ReceivedPrepareTime, State = #state{num_to_ack = NumToAck,
                     prepare_done(State, {normal_commit, MaxPrepareTime});
                 false ->
                     prepare_done(State, {reply_and_then_commit, MaxPrepareTime})
-        end;
+            end;
         _ ->
             {next_state, receive_prepared, State#state{num_to_ack = NumToAck - 1, prepare_time = MaxPrepareTime}}
     end.
@@ -988,7 +988,7 @@ execute_post_commit_hooks(Ops) ->
                 ?LOG_INFO("Post commit hook failed. Reason ~p", [Reason]);
             _ -> ok
         end
-                  end, lists:reverse(Ops)).
+    end, lists:reverse(Ops)).
 
 %%%===================================================================
 %%% Unit Tests

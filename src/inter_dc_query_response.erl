@@ -62,12 +62,12 @@ get_entries(BinaryQuery, QueryState) ->
 request_permissions(BinaryRequest, QueryState) ->
     ok = gen_server:cast(generate_server_name(rand:uniform(?INTER_DC_QUERY_CONCURRENCY)), {request_permissions, BinaryRequest, QueryState}).
 
--spec on_lock_server_request(binary(), #inter_dc_query_state{}) -> ok.
+-spec on_lock_server_request(binary(), inter_dc_query_state()) -> ok.
 on_lock_server_request(BinaryRequest, QueryState) ->
     ServerName = generate_server_name(rand:uniform(?INTER_DC_QUERY_CONCURRENCY)),
     ok = gen_server:cast(ServerName, {lock_server_request, BinaryRequest, QueryState}).
 
--spec system_test(binary(), #inter_dc_query_state{}) -> ok.
+-spec system_test(binary(), inter_dc_query_state()) -> ok.
 system_test(BinaryRequest, QueryState) ->
     ServerName = generate_server_name(rand:uniform(?INTER_DC_QUERY_CONCURRENCY)),
     ok = gen_server:cast(ServerName, {system_test, BinaryRequest, QueryState}).

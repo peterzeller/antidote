@@ -72,8 +72,8 @@ However, it should eventually be sent to the other DC to guarantee liveness/fair
 
 To achieve this goal, we use the following strategy:
 
-Always send the lock to the requesting DC if it has been held locally for more than `?MaxLockHoldDuration`.
-Otherwise, only send the lock if it has not been used in the last `?MinExclusiveLockDuration` (since it is likely to be used again).
+Always send the lock to the requesting DC if it has been held locally for more than `?MAX_LOCK_HOLD_DURATION`.
+Otherwise, only send the lock if it has not been used in the last `?MIN_EXCLUSIVE_LOCK_DURATION` (since it is likely to be used again).
  
 
 

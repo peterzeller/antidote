@@ -60,9 +60,9 @@
 
 % minimum time for holding an exclusive lock after acquiring it
 % (higher values should give higher throughput and higher tail latencies)
--define(MinExclusiveLockDuration, 250).
+-define(MIN_EXCLUSIVE_LOCK_DURATION, 250).
 
--define(MaxLockHoldDuration, 1000).
+-define(MAX_LOCK_HOLD_DURATION, 1000).
 
 % how long (in milliseconds) may a transaction take to acquire the necessary locks?
 -define(LOCK_REQUEST_TIMEOUT, 20000).
@@ -104,6 +104,8 @@
     s :: antidote_lock_server_state:state(),
     read_write_process :: pid()
 }).
+
+-type state() :: #state{}.
 
 -record(on_complete_crdt_update, {
     cont :: any(),
@@ -208,7 +210,7 @@ init([]) ->
 %%    spawn_link(fun() ->
 %%        check_lock_state_process(Self)
 %%    end),
-    S = antidote_lock_server_state:initial(MyDcId, AllDcs, ?MinExclusiveLockDuration, ?MaxLockHoldDuration, ?INTER_DC_LOCK_REQUEST_DELAY),
+    S = antidote_lock_server_state:initial(MyDcId, AllDcs, ?MIN_EXCLUSIVE_LOCK_DURATION, ?MAX_LOCK_HOLD_DURATION, ?INTER_DC_LOCK_REQUEST_DELAY),
     {ok, #state{
         s = S,
         read_write_process = spawn_link(fun() -> read_write_process(Self) end)
@@ -343,8 +345,8 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 
--spec handle_request_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), #state{}) -> Result
-    when Result :: {reply, Resp, #state{}} | {noreply, #state{}},
+-spec handle_request_locks(snapshot_time(), antidote_locks:lock_spec(), requester(), state()) -> Result
+    when Result :: {reply, Resp, state()} | {noreply, state()},
     Resp :: {could_not_obtain_logs, any()}.
 handle_request_locks(ClientClock, Locks, From, State) ->
     logger:notice("handle_request_locks~n ClientClock = ~p~n Locks= ~p", [ClientClock, Locks]),
@@ -361,8 +363,8 @@ handle_request_locks(ClientClock, Locks, From, State) ->
     run_actions(Actions, State2),
     {noreply, State2}.
 
--spec handle_release_locks(pid(), snapshot_time(), #state{}) ->
-    {reply, Resp, #state{}}
+-spec handle_release_locks(pid(), snapshot_time(), state()) ->
+    {reply, Resp, state()}
     when Resp :: ok | {lock_error, reason()} | 'unrelated process'.
 handle_release_locks(FromPid, CommitTime, State) ->
     S = State#state.s,
@@ -484,11 +486,11 @@ on_interdc_reply(_BinaryResp, _RequestCacheEntry) ->
 
 
 
--spec run_actions(antidote_lock_server_state:actions(), #state{}) -> ok.
+-spec run_actions(antidote_lock_server_state:actions(), state()) -> ok.
 run_actions(Actions, State) ->
     lists:foreach(fun(A) -> run_action(A, State) end, Actions).
 
--spec run_action(antidote_lock_server_state:action(), #state{}) -> ok.
+-spec run_action(antidote_lock_server_state:action(), state()) -> ok.
 run_action(#read_crdt_state{snapshot_time = Clock, data = Cont, objects = Objects}, State) ->
     antidote_lock_server_state:debug_log({event, read_crdt_send, #{
         clock => Clock,

@@ -267,8 +267,8 @@ handle_cast({finished_request, From, Reply}, State) ->
             gen_server:reply(From, {error, Err}),
             {noreply, State}
     end;
-handle_cast(_Request, State) ->
-    logger:error("handle_cast: unhandled ~p", [_Request]),
+handle_cast(Request, State) ->
+    logger:error("handle_cast: unhandled ~p", [Request]),
     {noreply, State}.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
